@@ -26,17 +26,22 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "pytest-asyncio>=0.24",
+    "pytest-timeout>=2.3",
     "ruff>=0.4",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+timeout = 600
 markers = [
     "integration: integration tests (deselect with -m 'not integration')",
     "llm_dependent: tests that depend on LLM behavior",
     "sandbox: tests that require AIO-Sandbox",
+    "sandbox_required: e2e tests that require sandbox MCP",
+    "pgvector_required: e2e tests that require pgvector",
     "security: security attack/defense tests",
+    "observability: observability/Langfuse verification tests",
     "no_llm: e2e tests without LLM (slash commands, routing)",
     "e2e: end-to-end tests via TestAPI",
     "full: full e2e tests with sandbox + pgvector",

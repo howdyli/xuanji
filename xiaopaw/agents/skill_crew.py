@@ -26,6 +26,11 @@ from typing import Any, Awaitable, Callable
 import yaml
 from crewai import Agent, Crew, Process, Task
 from crewai.hooks import ToolCallHookContext, before_tool_call, unregister_before_tool_call_hook
+# 必须用 MCPServerHTTP（Streamable HTTP），不是 MCPServerSSE。
+# AIO-Sandbox 的 /mcp 端点是 Streamable HTTP（POST + 可选 SSE 升级）。
+# 用 MCPServerSSE 会发 GET /mcp 期望持续事件流，sandbox 几秒后关连接，
+# CrewAI MCP 适配器卡在 _resolve_native 等 tools/list 响应 → 测试 5min 超时。
+# 症状参考 README → "常见坑 FAQ" 第 2 条。
 from crewai.mcp import MCPServerHTTP
 
 from xiaopaw.llm.aliyun_llm import AliyunLLM
@@ -99,6 +104,13 @@ def build_skill_crew(
     max_iter: int = 20,
     allowed_tools: list[str] | None = None,
 ) -> Crew:
+    if not sandbox_mcp_url or not sandbox_mcp_url.startswith(("http://", "https://")):
+        raise ValueError(
+            f"build_skill_crew: sandbox_mcp_url must be an http(s) URL, got "
+            f"{sandbox_mcp_url!r}. Empty or malformed URLs cause httpx.UnsupportedProtocol "
+            f"deep inside Sub-Crew, which manifests as a 5-minute TestAPI timeout. "
+            f"Pass a valid URL (e.g. http://localhost:8030/mcp) or skip skill execution."
+        )
     sandbox_mcp = MCPServerHTTP(url=sandbox_mcp_url)
     skill_llm = AliyunLLM(model=sub_agent_model, region="cn", temperature=0.3)
 

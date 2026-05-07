@@ -28,7 +28,7 @@ class AgentConfig(BaseModel):
 
 
 class SandboxConfig(BaseModel):
-    url: str = "http://localhost:8022/mcp"
+    url: str = "http://localhost:8030/mcp"
     timeout_s: int = Field(default=120, ge=10, le=600)
 
 

@@ -1,4 +1,8 @@
-"""IT-CFG-001 ~ IT-CFG-004: Two-layer config integration tests."""
+"""IT-CFG-001 ~ IT-CFG-004: Two-layer config integration tests.
+
+These tests use tmp_path hooks (not real shared_hooks), so they don't
+produce Langfuse traces. They verify config loading and merge behavior.
+"""
 
 from pathlib import Path
 from unittest.mock import MagicMock

@@ -7,8 +7,10 @@ import asyncio
 import pytest
 
 from tests.e2e.conftest import (
+    assert_langfuse_has_generation,
     assert_langfuse_has_observations,
     assert_langfuse_trace,
+    assert_langfuse_trace_quality,
     llm_assert,
     send_message,
 )
@@ -140,8 +142,8 @@ class TestLLMConversation:
         assert llm_assert(reply, "回复是友好的问候或自我介绍", api_key=qwen_api_key)
 
         if langfuse_available:
-            trace = assert_langfuse_trace(result["trace_id"])
-            assert trace["name"].startswith("xiaopaw-turn")
+            trace = await assert_langfuse_trace(result["trace_id"])
+            await assert_langfuse_trace_quality(result["trace_id"])
 
     @pytest.mark.llm_dependent
     async def test_simple_question_with_langfuse(self, llm_client, langfuse_available):
@@ -150,10 +152,9 @@ class TestLLMConversation:
         assert "2" in result["reply"]
 
         if langfuse_available:
-            trace = assert_langfuse_trace(result["trace_id"])
-            obs = trace.get("observations", [])
-            gen_obs = [o for o in obs if o.get("type") == "GENERATION"]
-            assert len(gen_obs) >= 1, "Expected at least 1 GENERATION observation"
+            await assert_langfuse_trace(result["trace_id"])
+            await assert_langfuse_trace_quality(result["trace_id"])
+            await assert_langfuse_has_generation(result["trace_id"])
 
     @pytest.mark.llm_dependent
     async def test_knowledge_question(self, llm_client, qwen_api_key, langfuse_available):
@@ -166,7 +167,7 @@ class TestLLMConversation:
         )
 
         if langfuse_available:
-            assert_langfuse_trace(result["trace_id"])
+            await assert_langfuse_trace_quality(result["trace_id"])
 
 
 class TestMultiTurnWithLangfuse:
@@ -181,8 +182,8 @@ class TestMultiTurnWithLangfuse:
         assert "张三" in r2["reply"]
 
         if langfuse_available:
-            assert_langfuse_trace(r1["trace_id"])
-            assert_langfuse_trace(r2["trace_id"])
+            await assert_langfuse_trace_quality(r1["trace_id"])
+            await assert_langfuse_trace_quality(r2["trace_id"])
 
     @pytest.mark.llm_dependent
     async def test_new_session_clears_context(self, llm_client, qwen_api_key, langfuse_available):
@@ -194,5 +195,5 @@ class TestMultiTurnWithLangfuse:
         assert llm_assert(r3["reply"], "回复表示不知道密码", api_key=qwen_api_key)
 
         if langfuse_available:
-            assert_langfuse_trace(r1["trace_id"])
-            assert_langfuse_trace(r3["trace_id"])
+            await assert_langfuse_trace_quality(r1["trace_id"])
+            await assert_langfuse_trace_quality(r3["trace_id"])

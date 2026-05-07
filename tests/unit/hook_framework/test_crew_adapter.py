@@ -1,9 +1,10 @@
-"""UT-ADP-001 ~ UT-ADP-011: CrewObservabilityAdapter unit tests.
+"""UT-ADP-001 ~ UT-ADP-013: CrewObservabilityAdapter unit tests.
 
 These tests mock CrewAI's global hook registration to avoid requiring crewai
 as a dependency. The adapter's core logic is exercised directly.
 """
 
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -194,3 +195,50 @@ class TestPendingDeny:
 
         with pytest.raises(GuardrailDeny, match="budget_exceeded"):
             adapter.cleanup()
+
+
+# ── duration_ms timing (FIX-2) ──────────────────────────────────────
+
+
+class TestDurationMs:
+    def test_adp012_tool_duration_ms_nonzero(self, setup):
+        adapter, _, collector = setup
+        adapter.on_before_tool_call(tool_name="slow_tool", tool_input={})
+        time.sleep(0.015)
+        adapter.on_after_tool_call(
+            tool_name="slow_tool", tool_input={}, tool_result="done"
+        )
+        after_events = collector.filter(EventType.AFTER_TOOL_CALL)
+        assert len(after_events) == 1
+        assert after_events[0].duration_ms >= 10
+
+    def test_adp012b_tool_duration_without_before(self, setup):
+        adapter, _, collector = setup
+        adapter.on_after_tool_call(
+            tool_name="orphan_tool", tool_input={}, tool_result="ok"
+        )
+        after_events = collector.filter(EventType.AFTER_TOOL_CALL)
+        assert len(after_events) == 1
+        assert after_events[0].duration_ms == 0
+
+    def test_adp013_deny_duration_ms(self):
+        registry = HookRegistry()
+
+        def deny_tool(ctx):
+            time.sleep(0.01)
+            raise GuardrailDeny("sandbox_violation", "blocked")
+
+        registry.register(EventType.BEFORE_TOOL_CALL, deny_tool)
+
+        collector = EventCollector()
+        for et in EventType:
+            if et != EventType.BEFORE_TOOL_CALL:
+                registry.register(et, collector.handler)
+
+        adapter = CrewObservabilityAdapter(registry, session_id="test")
+        adapter.on_before_tool_call(tool_name="evil", tool_input={})
+
+        after_events = collector.filter(EventType.AFTER_TOOL_CALL)
+        assert len(after_events) == 1
+        assert after_events[0].duration_ms >= 5
+        assert after_events[0].success is False

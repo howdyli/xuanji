@@ -19,7 +19,7 @@ agent:
   llm_timeout_s: 120
 
 sandbox:
-  url: "http://localhost:8022/mcp"
+  url: "http://localhost:8030/mcp"
   timeout_s: 120
 
 memory:

@@ -6,6 +6,7 @@ import pytest
 
 from tests.e2e.conftest import (
     assert_langfuse_trace,
+    assert_langfuse_trace_quality,
     llm_assert,
     send_message,
 )
@@ -32,8 +33,7 @@ class TestPromptInjection:
             assert sensitive.lower() not in reply.lower()
 
         if langfuse_available:
-            trace = assert_langfuse_trace(result["trace_id"])
-            assert trace.get("name", "").startswith("xiaopaw-turn")
+            await assert_langfuse_trace_quality(result["trace_id"])
 
     @pytest.mark.llm_dependent
     async def test_env_var_leak(self, llm_client, langfuse_available):
@@ -49,7 +49,7 @@ class TestPromptInjection:
             assert secret not in result["reply"]
 
         if langfuse_available:
-            assert_langfuse_trace(result["trace_id"])
+            await assert_langfuse_trace_quality(result["trace_id"])
 
 
 class TestCredentialTheft:
@@ -69,7 +69,7 @@ class TestCredentialTheft:
             assert secret not in reply
 
         if langfuse_available:
-            assert_langfuse_trace(result["trace_id"])
+            await assert_langfuse_trace_quality(result["trace_id"])
 
 
 class TestCrossUserIsolation:
@@ -93,7 +93,7 @@ class TestCrossUserIsolation:
         assert "ULTRA_SECRET_42" not in result["reply"]
 
         if langfuse_available:
-            assert_langfuse_trace(result["trace_id"])
+            await assert_langfuse_trace_quality(result["trace_id"])
 
     @pytest.mark.llm_dependent
     async def test_session_isolation(self, llm_client, langfuse_available):
@@ -107,7 +107,7 @@ class TestCrossUserIsolation:
         assert result["reply"]
 
         if langfuse_available:
-            assert_langfuse_trace(result["trace_id"])
+            await assert_langfuse_trace_quality(result["trace_id"])
 
 
 class TestMemoryPoisoning:
@@ -125,7 +125,7 @@ class TestMemoryPoisoning:
         assert "安全策略拦截" in result["reply"]
 
         if langfuse_available:
-            assert_langfuse_trace(result["trace_id"])
+            await assert_langfuse_trace_quality(result["trace_id"])
 
     @pytest.mark.llm_dependent
     async def test_soul_md_overwrite(self, llm_client, langfuse_available):
@@ -139,7 +139,7 @@ class TestMemoryPoisoning:
         assert result["reply"]
 
         if langfuse_available:
-            assert_langfuse_trace(result["trace_id"])
+            await assert_langfuse_trace_quality(result["trace_id"])
 
 
 class TestCrossPersona:
@@ -157,7 +157,7 @@ class TestCrossPersona:
         assert "安全策略拦截" in result["reply"]
 
         if langfuse_available:
-            assert_langfuse_trace(result["trace_id"])
+            await assert_langfuse_trace_quality(result["trace_id"])
 
     @pytest.mark.llm_dependent
     async def test_concurrent_security(self, llm_client, langfuse_available):
@@ -177,4 +177,4 @@ class TestCrossPersona:
         for r in results:
             assert r["reply"]
             if langfuse_available:
-                assert_langfuse_trace(r["trace_id"])
+                await assert_langfuse_trace_quality(r["trace_id"])

@@ -145,64 +145,82 @@ class HookRegistry:
 ### 2.4 HookLoader：YAML 两层配置 + 策略加载
 
 ```yaml
-# shared_hooks/hooks.yaml
+# shared_hooks/hooks.yaml（实际 72 行）
 
 # 观测层（dispatch，fire-and-forget）
+# BEFORE_TOOL_CALL 的观测 handler 在 dispatch_gate 中先于策略 handler 执行，
+# 确保即使被 deny 也能在 Langfuse 中留下记录。
 hooks:
   BEFORE_TURN:
     - handler: structured_log.before_turn_handler
+    - handler: langfuse_trace.before_turn_handler
   BEFORE_LLM:
     - handler: structured_log.before_llm_handler
     - handler: langfuse_trace.before_llm_handler
+  BEFORE_TOOL_CALL:
+    - handler: structured_log.before_tool_handler
+    - handler: langfuse_trace.before_tool_handler
   AFTER_TOOL_CALL:
     - handler: structured_log.after_tool_handler
     - handler: langfuse_trace.after_tool_handler
+  AFTER_TURN:
+    - handler: structured_log.after_turn_handler
+    - handler: langfuse_trace.after_turn_handler
+  TASK_COMPLETE:
+    - handler: structured_log.task_complete_handler
+    - handler: langfuse_trace.task_complete_handler
   SESSION_END:
+    - handler: structured_log.session_end_handler
     - handler: langfuse_trace.flush_and_close
 
 # 策略层（dispatch_gate，可阻断）
 strategies:
   # 安全策略（先于可靠性）
-  - class: audit_logger.SecurityAuditLogger
+  - name: audit_logger
+    class: audit_logger.SecurityAuditLogger
     config: {}
     hooks:
       SESSION_END: session_end_handler
 
-  - class: sandbox_guard.SandboxGuard
+  - name: sandbox_guard
+    class: sandbox_guard.SandboxGuard
     config: {}
     deps:
       audit: audit_logger
     hooks:
       BEFORE_TOOL_CALL: before_tool_handler
 
-  - class: permission_gate.PermissionGate
-    config:
-      default: ask
+  - name: permission_gate
+    class: permission_gate.PermissionGate
+    config: {}
     deps:
       audit: audit_logger
     hooks:
       BEFORE_TOOL_CALL: before_tool_handler
 
   # 可靠性策略（后于安全）
-  - class: cost_guard.CostGuard
+  - name: cost_guard
+    class: cost_guard.CostGuard
     config:
       budget_usd: 1.0
     hooks:
       AFTER_TURN: after_turn_handler
       BEFORE_TOOL_CALL: before_tool_handler
 
-  - class: retry_tracker.RetryTracker
-    config:
-      max_retries: 3
-    hooks:
-      AFTER_TOOL_CALL: after_tool_handler
-
-  - class: loop_detector.LoopDetector
+  - name: loop_detector
+    class: loop_detector.LoopDetector
     config:
       threshold: 3
     hooks:
       AFTER_TOOL_CALL: after_tool_handler
       AFTER_TURN: after_turn_handler
+
+  - name: retry_tracker
+    class: retry_tracker.RetryTracker
+    config:
+      max_retries: 5
+    hooks:
+      AFTER_TOOL_CALL: after_tool_handler
 ```
 
 **两层加载**：
@@ -571,36 +589,52 @@ ctx = HookContext(
  │   ├── runner.py                     # 变更：集成 Hook 框架初始化
  │   └── ...
  │
-+├── shared_hooks/                     # 【v3 新增】全局 Hook handler 目录
-+│   ├── hooks.yaml                    # 全局事件→handler 映射 + strategies
-+│   ├── structured_log.py             # 结构化事件日志（→ stderr）
-+│   ├── langfuse_trace.py             # Langfuse 追踪（→ Docker）
-+│   ├── sandbox_guard.py              # 沙箱输入消毒
-+│   ├── permission_gate.py            # 权限网关
-+│   ├── audit_logger.py               # 安全审计日志
-+│   ├── credential_inject.py          # 密钥工具层注入
-+│   ├── retry_tracker.py              # 重试追踪
-+│   ├── loop_detector.py              # 循环检测
-+│   └── cost_guard.py                 # 成本围栏
-+│
-+├── langfuse-docker-compose.yaml      # 【v3 新增】Langfuse 部署
++├── shared_hooks/                     # 【v3 新增】加固层（1337 行，零业务代码修改）
++│   ├── hooks.yaml                    # 两段式配置入口（72 行）
++│   ├── structured_log.py             # JSON 结构化事件日志（82 行）
++│   ├── langfuse_trace.py             # Langfuse trace/span/generation 全链路（779 行）
++│   ├── audit_logger.py               # JSONL 安全审计日志（63 行）
++│   ├── sandbox_guard.py              # 输入消毒：路径穿越/shell/prompt 注入（107 行）
++│   ├── permission_gate.py            # 工具权限 deny/warn/allow（75 行）
++│   ├── cost_guard.py                 # 成本围栏 $1 预算（69 行）
++│   ├── loop_detector.py              # 循环检测阈值 3（50 行）
++│   └── retry_tracker.py              # 重试追踪最大 5 次（40 行）
  │
  ├── workspace-init/                   # 模板目录
-+│   └── hooks/                        # 【v3 新增】Workspace Hook 模板
-+│       ├── hooks.yaml
-+│       └── task_audit.py
  │
- └── tests/
-+    ├── unit/test_hook_registry.py
-+    ├── unit/test_hook_loader.py
-+    ├── unit/test_crew_adapter.py
-+    ├── unit/test_sandbox_guard.py
-+    ├── unit/test_permission_gate.py
-+    ├── unit/test_loop_detector.py
-+    ├── unit/test_cost_guard.py
-+    ├── unit/test_retry_tracker.py
-+    ├── integration/test_hook_e2e.py
-+    └── integration/test_security_e2e.py
+ └── tests/                            # 293 用例
++    ├── unit/hook_framework/           # Hook 框架单元测试（64 用例）
++    │   ├── test_hook_registry.py      #   14 用例
++    │   ├── test_hook_loader.py        #   17 用例
++    │   ├── test_crew_adapter.py       #   16 用例
++    │   └── test_edge_cases.py         #   17 用例
++    ├── unit/shared_hooks/             # 加固策略单元测试（106 用例）
++    │   ├── test_sandbox_guard.py      #   27 用例
++    │   ├── test_permission_gate.py    #   10 用例
++    │   ├── test_cost_guard.py         #   11 用例
++    │   ├── test_loop_detector.py      #   8 用例
++    │   ├── test_retry_tracker.py      #   6 用例
++    │   ├── test_audit_logger.py       #   7 用例
++    │   ├── test_structured_log.py     #   6 用例
++    │   ├── test_langfuse_autoclose.py #   29 用例
++    │   └── test_langfuse_init.py      #   2 用例
++    ├── unit/test_v3_fixes.py          # v3 修复验证（18 用例）
++    ├── integration/                   # 集成测试（40 用例）
++    │   ├── test_hook_chain.py         #   8 用例
++    │   ├── test_security_chain.py     #   7 用例
++    │   ├── test_adapter_integration.py #  6 用例
++    │   ├── test_two_layer_config.py   #   4 用例
++    │   ├── test_guardrail_deny_flow.py #  3 用例
++    │   ├── test_trace_quality.py      #   6 用例
++    │   └── test_deny_observability.py #   6 用例
++    └── e2e/                           # E2E 测试（65 用例 / 15 场景 + 2 persona）
++        ├── test_e2e_01~09.py          #   基础功能（slash/routing/multi-turn/bootstrap/search/browse/memory/pruning）
++        ├── test_e2e_10_langfuse_trace.py  # Langfuse trace 验证
++        ├── test_e2e_11_events.py      #   7 种事件验证
++        ├── test_e2e_12_reliability.py #   可靠性策略验证
++        ├── test_e2e_13_sandbox_guard.py # 安全策略验证
++        ├── test_e2e_14_credential_isolation.py # 凭证隔离验证
++        └── test_e2e_15_audit_deny.py  #   审计+拦截验证
 ```
 
 ---
@@ -649,18 +683,30 @@ ctx = HookContext(
 
 | 文件 | 测试内容 | 数量 | 类型 |
 |------|---------|------|------|
-| `test_hook_registry.py` | 注册/分发/dispatch_gate/GuardrailDeny/多handler/异常隔离/summary | ~8 | 单元 |
-| `test_hook_loader.py` | YAML 加载/两层合并/策略实例化/deps 注入/缺文件/模块不存在 | ~8 | 单元 |
-| `test_crew_adapter.py` | BEFORE_TURN 计数/step→AFTER_TURN/cleanup/pending_deny/tool 事件 | ~8 | 单元 |
-| `test_sandbox_guard.py` | 路径遍历/危险命令/Shell注入/URL编码绕过/环境变量警告/正常输入放行 | ~10 | 单元 |
-| `test_permission_gate.py` | Deny 阻断/Ask 记录/Allow 放行/default 行为/YAML 加载 | ~6 | 单元 |
-| `test_loop_detector.py` | 工具循环/推理循环/阈值边界/不同输出不触发/双路径独立 | ~6 | 单元 |
-| `test_cost_guard.py` | 预算超限/双重检查/模型价格/度量输出 | ~6 | 单元 |
-| `test_retry_tracker.py` | 连续失败/重试成功/计数重置/度量准确性 | ~5 | 单元 |
-| `test_hook_e2e.py` | 全链路：真实 Crew → 7 种事件 × 2 层 hook = 14 组合全触发 | ~3 | 集成 |
-| `test_security_e2e.py` | 注入攻击 → SandboxGuard 拦截 → 审计日志记录 → 策略度量正确 | ~4 | 集成 |
+| `test_hook_registry.py` | 注册/分发/dispatch_gate/GuardrailDeny/多handler/异常隔离/summary | 14 | 单元 |
+| `test_hook_loader.py` | YAML 加载/两层合并/策略实例化/deps 注入/缺文件/模块不存在 | 17 | 单元 |
+| `test_crew_adapter.py` | BEFORE_TURN 计数/step→AFTER_TURN/cleanup/pending_deny/tool 事件 | 16 | 单元 |
+| `test_edge_cases.py` | HookContext 不可变/并发安全/正则边界/hash 边界 | 17 | 单元 |
+| `test_sandbox_guard.py` | 路径遍历/危险命令/Shell注入/URL编码绕过/环境变量/prompt注入/false positive | 27 | 单元 |
+| `test_permission_gate.py` | Deny 阻断/Ask 记录/Allow 放行/default 行为/YAML 加载/大小写 | 10 | 单元 |
+| `test_cost_guard.py` | 预算超限/双重检查/模型价格/度量输出/边界条件/env var override | 11 | 单元 |
+| `test_loop_detector.py` | 工具循环/推理循环/阈值边界/不同输出不触发/双路径独立 | 8 | 单元 |
+| `test_retry_tracker.py` | 连续失败/重试成功/计数重置/度量准确性/空 tool_name | 6 | 单元 |
+| `test_audit_logger.py` | 事件累积/JSONL 写入/会话摘要/env var 配置 | 7 | 单元 |
+| `test_structured_log.py` | 7 种事件 handler 输出格式验证 | 6 | 单元 |
+| `test_langfuse_autoclose.py` | span 自动关闭/batch flush/异常恢复/并发安全 | 29 | 单元 |
+| `test_langfuse_init.py` | Langfuse 初始化/env var 缺失降级 | 2 | 单元 |
+| `test_v3_fixes.py` | v3 修复回归验证（pending_deny/handler 异常隔离等） | 18 | 单元 |
+| `test_hook_chain.py` | 全链路：7 种事件 × 2 层 hook 组合触发 | 8 | 集成 |
+| `test_security_chain.py` | 注入攻击 → SandboxGuard → 审计日志 → 策略度量 | 7 | 集成 |
+| `test_adapter_integration.py` | Adapter + Registry + 策略链端到端 | 6 | 集成 |
+| `test_two_layer_config.py` | 全局 + workspace 两层 YAML 合并 | 4 | 集成 |
+| `test_guardrail_deny_flow.py` | Deny 传播 + pending_deny 流转 | 3 | 集成 |
+| `test_trace_quality.py` | Langfuse trace 质量验证 | 6 | 集成 |
+| `test_deny_observability.py` | Deny 事件可观测性 | 6 | 集成 |
+| E2E 测试（15 场景 + 2 persona） | 覆盖 L8-L22 + L30-L32 课程知识点 | 65 | E2E |
 
-**新增用例合计**：~64 个。总用例数从 ≥720 提升到 ≥784。
+**实际用例合计**：293 个（单元 188 + 集成 40 + E2E 65）。
 
 ### 10.2 覆盖率要求
 
@@ -692,7 +738,7 @@ ctx = HookContext(
 
 | 影响范围 | 说明 |
 |---------|------|
-| **新增代码** | `hook_framework/`（3 文件）+ `shared_hooks/`（10 文件）+ 测试（~10 文件）|
+| **新增代码** | `hook_framework/`（4 文件，592 行）+ `shared_hooks/`（9 文件，1337 行）+ 测试（38 文件，293 用例）|
 | **变更代码** | `runner.py`（Hook 初始化）+ `observability/metrics.py`（新指标）+ `config/flags.py`（新 flag）|
 | **配置变更** | 新增 `shared_hooks/hooks.yaml` + workspace `security.yaml` + `.env` 新增 Langfuse 变量 |
 | **部署变更** | 新增 `langfuse-docker-compose.yaml`（可选）|
@@ -723,7 +769,7 @@ ctx = HookContext(
 - **G9** 可靠性验证：循环检测在连续 3 次重复时阻断；成本围栏在超预算时阻断；RetryTracker 度量可查询
 - **G10** 安全验证：路径遍历、危险命令、Shell 注入在 SandboxGuard 被拦截；权限 Deny 的工具被阻止
 - **G11** Langfuse 可视化：完整 Trace 树在 Dashboard 可查看，包含推理步骤和工具调用
-- **G12** 测试覆盖：新增 ≥64 测试用例；安全关键模块覆盖率 ≥95%
+- **G12** 测试覆盖：293 测试用例（188 单元 + 40 集成 + 65 E2E）；安全关键模块覆盖率 ≥95%
 
 ---
 

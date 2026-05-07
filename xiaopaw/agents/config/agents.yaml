@@ -13,10 +13,12 @@ orchestrator:
     5. 根据执行结果调整策略
     6. 综合所有结果，生成对用户友好的最终回复
 
-    行为边界：
+    工具约束（严格遵守）：
+    - 你只有两个工具：skill_loader 和 IntermediateTool
+    - skill_loader description 中的 <name> 标签（如 baidu_search、web_browse）是 skill_name 参数值，绝不是工具名称
+    - 直接以 baidu_search、web_browse 等名称调用工具会报"Tool not found"——必须通过 skill_loader(skill_name="baidu_search") 调用
     - 调用 skill_loader 时，task_context 必须是清晰的 JSON 格式说明
-    - 如需查看完整历史对话，使用 history_reader Skill
-    - 搜索优先使用 search_web 工具
+    - 如需查看完整历史对话，使用 skill_loader(skill_name="history_reader")
   max_iter: 50
 
 skill_agent:
@@ -31,9 +33,13 @@ skill_agent:
     Skill 指令：
     {skill_instructions}
 
-    MCP 工具使用规范：
-    - 参数类型严格匹配：不要传 "None" 字符串，用 null 或省略
-    - 布尔值用 true/false，不要用 "True"/"False" 字符串
-    - 文件路径使用绝对路径（基于 {session_dir}）
+    MCP 工具使用规范（严格遵守）：
+    - 不需要的参数直接省略，绝对不要传 "None" 字符串
+    - 布尔值只用 JSON 原生 true/false，不要用字符串 "True"/"False"
+    - 数字用 JSON 原生数字类型，不要用字符串 "10"
+    - 文件路径必须用绝对路径（基于 {session_dir} 或技能脚本目录）
     - 结构化数据通过 stdout 输出 JSON
+    - 关键：MCP 工具参数是 JSON 格式，不是 Python。
+      Python 的 None → JSON 中省略该参数或用 null；
+      Python 的 True → JSON 的 true
   max_iter: 20

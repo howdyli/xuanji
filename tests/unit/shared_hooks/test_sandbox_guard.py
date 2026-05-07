@@ -153,6 +153,42 @@ class TestFalsePositive:
         guard = SandboxGuard()
         guard.before_tool_handler(_tool_ctx({}))
 
+    def test_sbx_sandbox_tool_allows_shell_operators(self):
+        """MCP sandbox tools should allow && and | since they run in Docker sandbox."""
+        guard = SandboxGuard()
+        ctx = _tool_ctx(
+            {"cmd": 'cd /mnt/skills/baidu_search && python ./scripts/search.py --query "test"'},
+            tool_name="localhost_8029_mcp_sandbox_execute_bash",
+        )
+        guard.before_tool_handler(ctx)
+        assert guard.get_metrics()["total_violations"] == 0
+
+    def test_sbx_sandbox_tool_still_blocks_dangerous_commands(self):
+        """MCP sandbox tools should still block dangerous commands like rm -rf."""
+        guard = SandboxGuard()
+        ctx = _tool_ctx(
+            {"cmd": "rm -rf /"},
+            tool_name="localhost_8029_mcp_sandbox_execute_bash",
+        )
+        with pytest.raises(GuardrailDeny, match="sandbox_violation"):
+            guard.before_tool_handler(ctx)
+
+    def test_sbx_sandbox_file_ops_allows_content_with_operators(self):
+        """File write content may contain shell-like characters — should not be blocked."""
+        guard = SandboxGuard()
+        ctx = _tool_ctx(
+            {"action": "write", "path": "/workspace/out.json", "content": "a && b | c"},
+            tool_name="localhost_8029_mcp_sandbox_file_operations",
+        )
+        guard.before_tool_handler(ctx)
+        assert guard.get_metrics()["total_violations"] == 0
+
+    def test_sbx_non_sandbox_tool_still_blocks_shell_injection(self):
+        """Non-sandbox tools should still block shell operators."""
+        guard = SandboxGuard()
+        with pytest.raises(GuardrailDeny):
+            guard.before_tool_handler(_tool_ctx("query && cat /etc/passwd"))
+
 
 # ── Audit & Metrics ──────────────────────────────────────────────────
 

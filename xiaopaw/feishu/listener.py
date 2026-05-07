@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -36,27 +37,32 @@ class FeishuListener:
         self._on_bot_added = on_bot_added
         self._allowed_chats = set(allowed_chats) if allowed_chats else None
         self._ws_client = None
+        self._main_loop: asyncio.AbstractEventLoop | None = None
 
     async def start(self) -> None:
-        import lark_oapi as lark
-        from lark_oapi.adapter.websocket import LarkWSClient
+        import threading
 
-        cli = lark.Client.builder() \
-            .app_id(self._app_id) \
-            .app_secret(self._app_secret) \
-            .build()
+        import lark_oapi.ws.client as ws_mod
+        from lark_oapi.ws.client import Client as WsClient
 
+        self._main_loop = asyncio.get_running_loop()
         event_handler = self._build_event_handler()
-        self._ws_client = LarkWSClient(cli, event_handler)
-        self._ws_client.start()
-        logger.info("feishu websocket listener started")
+        self._ws_client = WsClient(
+            app_id=self._app_id,
+            app_secret=self._app_secret,
+            event_handler=event_handler,
+        )
+
+        def _run_ws() -> None:
+            ws_mod.loop = asyncio.new_event_loop()
+            self._ws_client.start()
+
+        t = threading.Thread(target=_run_ws, daemon=True)
+        t.start()
+        logger.info("feishu websocket listener started (thread=%s)", t.name)
 
     async def stop(self) -> None:
         if self._ws_client:
-            try:
-                self._ws_client.stop()
-            except Exception:
-                pass
             logger.info("feishu websocket listener stopped")
 
     def _build_event_handler(self):
@@ -64,8 +70,10 @@ class FeishuListener:
 
         handler = lark.EventDispatcherHandler.builder("", "")
 
-        async def _on_p2p_receive(data) -> None:
-            await self._handle_message_event(data)
+        def _on_p2p_receive(data) -> None:
+            asyncio.run_coroutine_threadsafe(
+                self._handle_message_event(data), self._main_loop
+            )
 
         handler.register_p2_im_message_receive_v1(_on_p2p_receive)
         return handler.build()

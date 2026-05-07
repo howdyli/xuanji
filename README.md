@@ -105,6 +105,31 @@ chmod 666 data/workspace/*.md
 
 > 沙箱将 `./xiaopaw/skills` 挂载到容器 `/mnt/skills`，将 `./data/workspace` 挂载到 `/workspace`。这两个目录必须存在。
 
+**⚠️ 不要 `rm -rf data/workspace/`（典型坑）**
+
+清空 workspace 时，**只删 contents、保留目录本身**：
+
+```bash
+# ✅ 正确：只清内容，目录 inode 不变
+rm -rf data/workspace/* data/workspace/.[!.]*
+
+# ❌ 错误：会破坏 docker bind mount
+rm -rf data/workspace && mkdir data/workspace
+```
+
+原理：Docker bind mount 绑定的是 host 目录的 **inode**。删掉目录再 mkdir 会创建新 inode，但容器里的 `/workspace` 仍指向旧（已删除）inode —— host 写文件容器看不到，反之亦然。症状：MCP 工具调用挂死、memory-save 写入丢失、e2e 测试卡在 "MCP Connection Started" 不动。
+
+如果已经 `rm -rf` 了，用以下命令修复：
+
+```bash
+docker compose -f sandbox-docker-compose.yaml restart
+
+# 验证 host / container inode 一致
+stat -c "host=%i" data/workspace
+docker exec xiaopaw-v2-aio-sandbox-1 stat -c "container=%i" /workspace
+# 两个数字必须相同，否则 mount 还是坏的
+```
+
 ### Step 5：启动 pgvector（可选，记忆搜索需要）
 
 如果只是体验基本对话，可以跳过这步。需要第 22 课的"三层记忆"中向量搜索功能时再启动。
@@ -632,6 +657,70 @@ ruff check .
 | `pgvector_required` | 需要 pgvector 数据库 |
 | `security` | 安全相关测试 |
 | `e2e` | 端到端测试 |
+
+---
+
+## 常见坑 FAQ（学员最容易踩）
+
+> 这几个坑都跟"看似成功，实际坏掉"或"5分钟挂死无报错"有关。先记住症状，遇到时直接对号入座。
+
+### 1. memory-save 说"已记住"，但 `/new` 后召回失败
+
+**症状**：保存阶段看到 `好的，已记住...`，但下次会话问"我是做什么的"，agent 回"不清楚"。
+
+**根因**：`data/workspace/*.md` 文件 perms 漂移成 `644`（root 只读）。沙箱以 `gem`(UID 1000) 运行，写 `/workspace/user.md` 收 `Permission denied`，**但 LLM "创意"地 cp 出去再写到 sub-dir，最后返回成功** —— Bootstrap 只读 `/workspace/user.md`，看不到。
+
+**自查**：
+```bash
+ls -la data/workspace/*.md       # 应该是 -rw-rw-rw- (666)
+chmod 666 data/workspace/*.md    # 修复
+```
+
+启动 XiaoPaw 时 `xiaopaw/main.py` 会自动重置 perms，重启 XiaoPaw 通常就能自愈。memory-save SKILL.md 已加"严禁绕道"规则，新版本 LLM 遇到 `Permission denied` 会显式返回 `errcode 1003`，不再静默成功。
+
+### 2. 测试卡在 `MCP Connection Started` 不动 5 分钟
+
+**症状**：sub-crew 启动后只打印 `MCP Connection Started` 然后无任何输出，5 分钟后 `concurrent.futures.TimeoutError` 或测试 SocketTimeout。
+
+**根因**（任一）：
+- **Transport 不匹配**：`MCPServerSSE` 配 `/mcp`（HTTP）端点。沙箱 `/mcp` 是 Streamable HTTP，必须用 `MCPServerHTTP`。
+- **URL 空串**：`MCPServerHTTP(url="")` → httpx 抛 `UnsupportedProtocol`，被 anyio TaskGroup 吞，asyncgen 关不掉，请求永远不返回。
+
+**自查**：
+```bash
+# 直接测沙箱 MCP（应返回 JSON 而非 404）
+curl -s -X POST http://localhost:8030/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream, application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"1.0"}}}'
+```
+
+`xiaopaw/agents/skill_crew.py::build_skill_crew` 已加 URL 校验，配错时直接 `ValueError` 而非挂 5min。
+
+### 3. `rm -rf data/workspace` 之后 MCP 挂死、沙箱 host 互不可见
+
+**症状**：删了 workspace 目录再 mkdir，跑测试发现 sandbox 写的文件 host 看不到，或反之；MCP 工具调用挂死。
+
+**根因**：Docker bind mount 绑的是 host 目录的 inode。`rm -rf <dir> && mkdir <dir>` 创建的是新 inode，容器仍指向旧（已删）inode。
+
+**自查 + 修复**：
+```bash
+stat -c "%i" data/workspace                                    # host inode
+docker exec xiaopaw-v2-aio-sandbox-1 stat -c "%i" /workspace   # container inode — 必须相同
+docker compose -f sandbox-docker-compose.yaml restart           # 不一致就重启重建 mount
+```
+
+**正确清空姿势**：`rm -rf data/workspace/*`（清 contents，保留目录本身）。
+
+### 4. 怎么读 Langfuse trace 时不要被假成功骗
+
+学员看 trace 树时，**根 span output ≠ 内部全部成功**。Trace 显示 "好的已记住" 不代表真的写到 user.md。
+
+**正确读法**：
+- 检查 root span `name`、`source: xiaopaw-v2`、tree 结构
+- 检查每个 tool span 的 `level`（DEFAULT vs WARNING）和 `statusMessage`
+- 检查最里层 file_operations 的 output JSON 里 `success` 字段
+- 跨 session 的语义检查（"我能召回吗？"）才是真正的端到端断言
 
 ---
 

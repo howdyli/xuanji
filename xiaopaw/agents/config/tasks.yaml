@@ -1,8 +1,5 @@
 main_task:
   description: >
-    历史对话：
-    {history}
-
     当前用户消息：
     {user_message}
 

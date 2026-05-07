@@ -6,7 +6,6 @@ import asyncio
 import logging
 import os
 import signal
-import sys
 from pathlib import Path
 
 from xiaopaw.config.safety import assert_all_production_safe
@@ -52,6 +51,27 @@ async def main() -> None:
     workspace_dir = Path(cfg.workspace)
     workspace_dir.mkdir(parents=True, exist_ok=True)
     ctx_dir = data_dir / "ctx"
+
+    # Workspace init: copy template files from workspace-init/ if missing (fresh user).
+    # Sandbox gem (UID 1000) needs to write workspace files; root-owned 644 blocks
+    # memory-save → LLM "creatively" writes to alternate path → Skill returns success
+    # but Bootstrap never sees it. Force 0o666 on every startup to prevent this trap.
+    workspace_init_dir = Path(__file__).parent.parent / "workspace-init"
+    if workspace_init_dir.exists():
+        import shutil
+        workspace_dir.chmod(0o777)
+        for src in workspace_init_dir.iterdir():
+            if not src.is_file():
+                continue
+            dest = workspace_dir / src.name
+            if not dest.exists():
+                shutil.copy2(src, dest)
+                logger.info("workspace init: copied %s to workspace", src.name)
+        for f in workspace_dir.glob("*.md"):
+            try:
+                f.chmod(0o666)
+            except OSError as e:
+                logger.warning("workspace chmod 666 failed for %s: %s", f.name, e)
 
     # Build Feishu sender or capture sender
     if is_dev and cfg.debug.enable_test_api:

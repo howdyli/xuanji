@@ -28,15 +28,29 @@ class FeishuSender:
         self._backoff = retry_backoff
         self._sem = asyncio.Semaphore(max_concurrent)
 
+    def _build_card(self, text: str) -> str:
+        card = {
+            "config": {"wide_screen_mode": True},
+            "elements": [
+                {
+                    "tag": "div",
+                    "text": {"content": text, "tag": "lark_md"},
+                }
+            ],
+        }
+        return json.dumps(card, ensure_ascii=False)
+
     async def send(self, routing_key: str, content: str) -> str:
         async with self._sem:
-            return await self._send_with_retry(routing_key, content, msg_type="interactive")
+            return await self._send_with_retry(
+                routing_key, self._build_card(content), msg_type="interactive"
+            )
 
-    async def send_thinking(self, routing_key: str, text: str = "...") -> str | None:
+    async def send_thinking(self, routing_key: str, text: str = "⏳ 思考中，请稍候...") -> str | None:
         async with self._sem:
             try:
                 return await self._send_with_retry(
-                    routing_key, json.dumps({"text": text}), msg_type="text"
+                    routing_key, self._build_card(text), msg_type="interactive"
                 )
             except Exception:
                 logger.debug("send_thinking failed (non-critical)")
@@ -45,7 +59,7 @@ class FeishuSender:
     async def update_card(self, card_msg_id: str, content: str) -> None:
         async with self._sem:
             try:
-                await self._update_card_with_retry(card_msg_id, content)
+                await self._update_card_with_retry(card_msg_id, self._build_card(content))
             except Exception:
                 logger.warning("update_card failed for %s", card_msg_id)
 
@@ -116,6 +130,12 @@ class FeishuSender:
                 )
                 if response.success():
                     return
+                logger.warning(
+                    "update_card error (attempt %d): code=%d msg=%s",
+                    attempt, response.code, response.msg,
+                )
+                if attempt < self._max_retries - 1:
+                    await asyncio.sleep(self._backoff[min(attempt, len(self._backoff) - 1)])
             except Exception:
                 if attempt < self._max_retries - 1:
                     await asyncio.sleep(self._backoff[min(attempt, len(self._backoff) - 1)])

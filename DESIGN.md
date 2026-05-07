@@ -1,7 +1,7 @@
 # XiaoPaw v2 详细设计文档（总纲）
 
 - **项目**：XiaoPaw v2（小爪子 v2）— 飞书本地工作助手（生产加固版）
-- **版本**：**v2.1**（2026-04-19 升级）
+- **版本**：**v3**（2026-04-24 系统加固）/ v2.1（2026-04-19 升级）
 - **原始日期**：2026-04-17（v2.0-draft）
 - **前身**：`/root/course/code/xiaopaw-with-memory/`（第 22 课教学示例）
 - **改造依据**：
@@ -38,6 +38,49 @@
 
 ---
 
+## 📝 v2.1 → v3 变更日志（系统加固，2026-04-24 ~ 2026-05-02）
+
+**设计文档**：`docs/12-hook-hardening.md`（v3.1-rc1，4-way Review + E2E 反向验证）
+
+### 核心新增
+
+| 变更 | 内容 | 影响文档 |
+|---|---|---|
+| **Hook 框架** | HookRegistry（dispatch/dispatch_gate）+ HookLoader（两层 YAML）+ CrewObservabilityAdapter（4→7 映射）| 12 / 02 / 01 |
+| **5+2 事件体系** | BEFORE_TURN/BEFORE_LLM/BEFORE_TOOL_CALL/AFTER_TOOL_CALL/AFTER_TURN + TASK_COMPLETE/SESSION_END | 12 |
+| **shared_hooks/ 加固层** | 9 个策略文件（1337 行），hooks.yaml 两段式配置，零业务代码修改 | 12 |
+| **观测策略** | structured_log（82 行）+ langfuse_trace（779 行，含 span 栈 + auto-close + batch flush）| 12 / 06 |
+| **安全策略** | sandbox_guard（107 行，正则输入消毒）+ permission_gate（75 行，三级控制）+ audit_logger（63 行）| 12 / 07 |
+| **可靠性策略** | cost_guard（69 行，$1 预算围栏）+ loop_detector（50 行，阈值 3）+ retry_tracker（40 行）| 12 |
+| **Runner 集成** | pending_deny 检查 + GuardrailDeny 捕获 + 7 事件 dispatch 调用点 | 02 / 05 |
+
+### 测试
+
+| 类型 | 数量 | 新增文件 |
+|---|---|---|
+| 单元测试 | 188（shared_hooks 106 + hook_framework 64 + v3_fixes 18）| tests/unit/shared_hooks/ + tests/unit/hook_framework/ |
+| 集成测试 | 40（hook_chain / security_chain / adapter / two_layer_config / deny_flow / trace_quality / deny_observability）| tests/integration/ |
+| E2E | 65 用例 / 15 场景 + 2 persona（覆盖 L8-L22 + L30-L32）| tests/e2e/ |
+| **合计** | **293** | |
+
+### E2E 验证与修复
+
+| 文档 | 发现 |
+|---|---|
+| `14-e2e-test-design.md` | 15 场景覆盖矩阵、2 层 client（slash_client / llm_client）、LLM-as-Judge 断言 |
+| `15-e2e-fix-structured-log-and-timing.md` | 5 个问题：3 缺失 handler / duration_ms=0 / Langfuse init 静默失败 / tool_call 计数不匹配 / E2E-11 超时 |
+| `langfuse-trace-fix-design.md` | 8 个 trace 质量问题（P1-P8）：AFTER_TURN 语义混淆、span 树 3 层嵌套预期 |
+| `e2e-05-search-regression-report.md` | 搜索场景回归验证通过，185.46s，21 observations |
+| `e2e-05-langfuse-trace-deep-analysis.md` | trace 质量审计：86% 有 input，62% 有 output，0% 有 token usage |
+
+### 4-Way Review 结论（ADR-v3-001 ~ ADR-v3-008）
+
+- **2 CRITICAL**：ADR-v3-001 全局 hook 并发安全 / ADR-v3-002 pending_deny 静默丢弃
+- **6 HIGH**：ADR-v3-003 ~ 008（handler 异常隔离、策略注册顺序、cost 精度等）
+- **8 MEDIUM**：见 `12-hook-hardening.md` §12
+
+---
+
 ## 📖 文档导航
 
 本文档为**总纲**，链接各专题子文档。阅读顺序建议：
@@ -57,6 +100,10 @@
 | ⭐⭐ | [10-testing.md](docs/10-testing.md) | 实现工程师 / QA | 测试分层、覆盖率要求、故障注入 |
 | ⭐ | [11-migration-v1-to-v2.md](docs/11-migration-v1-to-v2.md) | v1 既有部署方 | 从 v1 升级到 v2 的步骤 |
 | ⭐⭐⭐ | [12-hook-hardening.md](docs/12-hook-hardening.md) | 架构师 / 安全 / SRE | **【v3 新增】** Hook 框架 + 可靠性策略 + 安全策略（模块五集成） |
+| ⭐⭐ | [13-test-design-hook-hardening.md](docs/13-test-design-hook-hardening.md) | QA / 实现 | **【v3 新增】** 加固层测试设计（136 用例规格） |
+| ⭐⭐ | [14-e2e-test-design.md](docs/14-e2e-test-design.md) | QA / 实现 | **【v3 新增】** E2E 测试设计（15 场景覆盖矩阵） |
+| ⭐ | [15-e2e-fix-structured-log-and-timing.md](docs/15-e2e-fix-structured-log-and-timing.md) | 实现 | **【v3 新增】** E2E 发现的 5 个问题修复记录 |
+| ⭐ | [langfuse-trace-fix-design.md](docs/langfuse-trace-fix-design.md) | 实现 / SRE | **【v3 新增】** Langfuse trace 质量 8 问题修复设计 |
 
 ### SSOT 权威清单（v2.1 新增，所有文档引用不硬编码）
 
@@ -259,6 +306,12 @@ xiaopaw-v2/
 │   ├── 09-config.md                 # 【v2 新增】
 │   ├── 10-testing.md
 │   ├── 11-migration-v1-to-v2.md     # 【v2 新增】
+│   ├── 12-hook-hardening.md         # 【v3 新增】Hook 框架 + 加固策略设计
+│   ├── 13-test-design-hook-hardening.md  # 【v3 新增】加固层测试设计
+│   ├── 14-e2e-test-design.md        # 【v3 新增】E2E 测试设计
+│   ├── 15-e2e-fix-structured-log-and-timing.md  # 【v3 新增】E2E 修复记录
+│   ├── langfuse-trace-fix-design.md # 【v3 新增】Langfuse trace 质量修复
+│   ├── e2e-05-*.md                  # 【v3 新增】E2E 分析报告
 │   ├── threat-model.md              # 【v2 新增】威胁模型
 │   ├── compliance-baseline.md       # 【v2 新增】合规基线
 │   ├── secret-rotation-runbook.md   # 【v2 新增】凭证轮换 runbook
@@ -331,6 +384,11 @@ xiaopaw-v2/
 │   ├── utils/
 │   │   └── retry.py                 # 【v2 新增】tenacity(tuple) 工厂
 │   │
+│   ├── hook_framework/              # 【v3 新增】Hook 框架（592 行）
+│   │   ├── registry.py              # HookRegistry：dispatch + dispatch_gate（118 行）
+│   │   ├── loader.py                # HookLoader：YAML 两层配置 + 依赖注入（197 行）
+│   │   └── crew_adapter.py          # CrewObservabilityAdapter：4→7 映射 + pending_deny（274 行）
+│   │
 │   └── skills/                      # 保留 v1 的 13 个 Skills（MCP 白名单由 SKILL.md frontmatter 声明）
 │       ├── pdf/ docx/ pptx/ xlsx/
 │       ├── feishu_ops/ scheduler_mgr/ baidu_search/ web_browse/
@@ -340,12 +398,24 @@ xiaopaw-v2/
 │       ├── memory-governance/
 │       └── search_memory/           # routing_key required
 │
+├── shared_hooks/                    # 【v3 新增】加固层（1337 行，零业务代码修改）
+│   ├── hooks.yaml                   # 两段式配置入口（72 行）
+│   ├── structured_log.py            # JSON 事件日志（82 行）
+│   ├── langfuse_trace.py            # Langfuse trace/span/generation 全链路（779 行）
+│   ├── audit_logger.py              # JSONL 审计日志（63 行）
+│   ├── sandbox_guard.py             # 输入消毒：路径穿越/shell/prompt（107 行）
+│   ├── permission_gate.py           # 工具权限 deny/warn/allow（75 行）
+│   ├── cost_guard.py                # 成本围栏 $1 预算（69 行）
+│   ├── loop_detector.py             # 循环检测阈值 3（50 行）
+│   └── retry_tracker.py             # 重试追踪最大 5 次（40 行）
+│
 ├── workspace-init/                  # 初始化模板（soul/user/agent/memory.md）
 │
-├── tests/
-│   ├── unit/                        # ≥720 用例
-│   ├── integration/                 # 含故障注入
-│   └── fixtures/
+├── tests/                           # 【v3 大幅扩充】293 用例
+│   ├── unit/                        # 188 用例（shared_hooks 106 + hook_framework 64 + v3_fixes 18）
+│   ├── integration/                 # 40 用例（hook_chain / security_chain / deny_flow 等）
+│   ├── e2e/                         # 65 用例（15 场景 + 2 persona）
+│   └── fixtures/                    # hook_tool_inputs / hook_yaml_samples / security_policy_samples
 │
 ├── scripts/                         # 【v2 新增】CI 脚本
 │   ├── verify_trace_coverage.py
@@ -385,6 +455,17 @@ xiaopaw-v2/
 | `observability/trace` | 【v2 新增】ContextVar + executor helper | 覆盖率 ≥85% |
 | `observability/pii_mask` | 【v2 新增】落盘前 mask 手机/邮箱/身份证 | 所有 user_message 日志 |
 | `observability/security` | 【v2 新增】RateLimiter + memory-save filter | 入口强制 |
+| `hook_framework/registry` | 【v3 新增】HookRegistry（dispatch + dispatch_gate）| handler 异常不扩散（try-except 隔离）|
+| `hook_framework/loader` | 【v3 新增】HookLoader（两层 YAML + deps 注入）| 声明顺序 = 实例化顺序 |
+| `hook_framework/crew_adapter` | 【v3 新增】CrewObservabilityAdapter（4→7 事件映射）| pending_deny 机制绕过 CrewAI 异常吞噬 |
+| `shared_hooks/structured_log` | 【v3 新增】JSON 结构化事件日志 | 零依赖降级（Langfuse 挂了还有日志）|
+| `shared_hooks/langfuse_trace` | 【v3 新增】Langfuse trace/span/generation + batch flush | REST API v4 + span 栈 + auto-close |
+| `shared_hooks/sandbox_guard` | 【v3 新增】正则输入消毒（路径穿越/shell/prompt 注入）| 确定性检测，不依赖 LLM |
+| `shared_hooks/permission_gate` | 【v3 新增】工具权限三级控制 | Deny > Ask > Allow，YAML 声明 |
+| `shared_hooks/cost_guard` | 【v3 新增】成本围栏（$1 预算）| AFTER_TURN 算账 + BEFORE_TOOL_CALL 拦截 |
+| `shared_hooks/loop_detector` | 【v3 新增】循环检测（阈值 3）| MD5 哈希双路径去重 |
+| `shared_hooks/retry_tracker` | 【v3 新增】重试追踪（最大 5 次）| 纯观测不阻断 |
+| `shared_hooks/audit_logger` | 【v3 新增】JSONL 安全审计日志 | SESSION_END 写摘要 |
 
 ---
 
@@ -512,22 +593,25 @@ xiaopaw_cron_dlq_total                               # Cron 死信
 
 > 详细见 [10-testing.md](docs/10-testing.md)。
 
-**测试分层**：
-- **单元**（≥720 用例）：每个模块独立 mock 外部依赖
-- **集成**（≥30 用例，标记 `llm/sandbox/pgvector/feishu`）：真实外部服务可选
+**测试分层**（v3 更新，293 用例）：
+- **单元**（188 用例）：shared_hooks 106 + hook_framework 64 + v3_fixes 18
+- **集成**（40 用例）：hook_chain / security_chain / adapter / two_layer_config / deny_flow / trace_quality / deny_observability
+- **E2E**（65 用例 / 15 场景 + 2 persona）：覆盖 L8-L22 + L30-L32 全课程知识点
 - **故障注入**（5 组）：ENOSPC / LLM 5xx / pgvector down / Skill 卡死 / 飞书 429
-- **安全**（3 组）：YAML 注入 / 路径遍历 / memory 投毒 / 跨 routing_key
+- **安全**（含于 E2E + unit）：sandbox_guard 18 用例 / permission_gate 10 用例 / E2E-13~15 安全场景
 - **互斥正确性**（1 组）：100 并发 append 同 sid 无交叉
 
-**覆盖率门**：全局 ≥88%，核心模块（runner, session, memory, main_crew, skill_loader）≥90%。
+**覆盖率门**：全局 ≥88%，安全关键模块（sandbox_guard, permission_gate）≥95%，其他核心模块 ≥90%。
 
 **CI gates**：
 - ruff / black / bandit
 - pytest --cov-fail-under=88
-- 模块级 coverage 按文件 fail-under=90
+- 模块级 coverage 按文件 fail-under=90（安全模块 95）
 - trace_id 覆盖率 ≥85%
 - PII mask 验证
 - pip-audit（HIGH fail）
+- 【v3 新增】hook handler 注册完整性检查
+- 【v3 新增】E2E Langfuse trace 质量门
 
 ---
 
@@ -629,18 +713,28 @@ DESIGN.md（本文）
  ├── 配置    → 09-config.md
  ├── 测试    → 10-testing.md
  ├── 迁移    → 11-migration-v1-to-v2.md
- └── Hook加固 → 12-hook-hardening.md  ← 【v3 新增】模块五三层集成
+ ├── Hook加固 → 12-hook-hardening.md       ← 【v3 新增】模块五三层集成
+ ├── 加固测试 → 13-test-design-hook-hardening.md  ← 【v3 新增】136 用例规格
+ ├── E2E设计  → 14-e2e-test-design.md       ← 【v3 新增】15 场景覆盖矩阵
+ ├── E2E修复  → 15-e2e-fix-structured-log-and-timing.md  ← 【v3 新增】
+ └── Trace修复 → langfuse-trace-fix-design.md  ← 【v3 新增】
 
 运维专题:
  ├── Phase 0   → phase0-checklist.md
  ├── Tokenizer → tokenizer-calibration.md
  └── 合规     → compliance-baseline.md
+
+E2E 分析报告（v3 新增）:
+ ├── e2e-05-search-regression-report.md
+ └── e2e-05-langfuse-trace-deep-analysis.md
 ```
 
 ---
 
 ## 17. 文档版本与贡献
 
+- **v3.0**（2026-04-24）：系统加固 — Hook 框架 + shared_hooks 加固层（观测/可靠性/安全）+ 293 测试
+- **v2.1**（2026-04-19）：Phase 0 验证 — 10 个 ADR 修正 + 5 张 SSOT 清单
 - **v2.0-draft**（2026-04-17）：首版发布，基于 v1 review 结论和 v2 重构设计
 - 每次重大变更需同步更新：
   - 本 DESIGN.md 的摘要

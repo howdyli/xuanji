@@ -72,7 +72,7 @@ async def _handle_message(request: web.Request) -> web.Response:
     await runner.dispatch(inbound)
 
     try:
-        reply = await capture.wait_for_reply(msg_id, timeout=300.0)
+        reply = await capture.wait_for_reply(msg_id, timeout=550.0)
     except asyncio.TimeoutError:
         reply = "[timeout]"
 
