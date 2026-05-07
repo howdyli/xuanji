@@ -1,4 +1,21 @@
-"""SkillLoaderTool: progressive disclosure skill catalog + Sub-Crew trigger."""
+"""SkillLoaderTool —— 渐进式能力披露 + Sub-Crew 触发器。
+
+【课程对应】
+- L17《项目实战 1：能力骨架》核心模式
+- L29《零编排架构》：本工具的 _run() 触发 Sub-Crew 在子线程执行
+- L33 机制二：本工具会显式捕获父 Langfuse span，让 Sub-Crew 的 trace 准确挂在 skill 调用之下
+
+【渐进式能力披露的价值】
+Main Crew 的 prompt 里**只放技能名+描述**（一两行），不放任何技能实现细节。
+LLM 看到的"技能清单"始终保持小尺寸，避免被庞大的工具 schema 撑爆 context；
+真正的实现复杂度推迟到 Sub-Crew 内部 ——
+LLM 通过 skill_loader(skill_name="baidu_search", query=...) 调用，
+本工具内部读取 SKILL.md → 构造 Sub-Crew → 在沙箱里执行 → 返回结果。
+
+【两层 Crew 的责任划分】
+- Main Crew  ：理解意图、选技能、维护对话上下文
+- Sub-Crew   ：在沙箱里执行单一技能（路径隔离 + 工具受限）
+"""
 
 from __future__ import annotations
 
@@ -17,6 +34,64 @@ from xiaopaw.agents.skill_crew import build_skill_crew
 
 logger = logging.getLogger(__name__)
 
+
+def _get_langfuse_parent_span_id() -> str:
+    """Capture current Langfuse parent span ID before Sub-Crew context copy."""
+    try:
+        from shared_hooks.langfuse_trace import _root_span_id_var, _span_stack_var
+
+        stack = _span_stack_var.get(())
+        if stack:
+            return stack[-1][0]
+        return _root_span_id_var.get("")
+    except ImportError:
+        return ""
+
+
+def _reset_langfuse_contextvars(parent_span_id: str = "") -> None:
+    """Reset Langfuse ContextVars for Sub-Crew isolation.
+
+    Preserves _trace_id_var so sub-crew spans attach to the same trace.
+    Sets _root_span_id_var to parent_span_id (skill_loader span) so
+    sub-crew observations nest under it instead of being flat under
+    the session root.
+    Resets per-generation/tool counters to avoid state leakage.
+    """
+    try:
+        from shared_hooks.langfuse_trace import (
+            _closed_spans_var,
+            _gen_count_var,
+            _gen_id_var,
+            _root_span_id_var,
+            _span_stack_var,
+            _tool_count_var,
+        )
+
+        if parent_span_id:
+            _root_span_id_var.set(parent_span_id)
+        else:
+            stack = _span_stack_var.get(())
+            if stack:
+                _root_span_id_var.set(stack[-1][0])
+
+        _gen_id_var.set("")
+        _gen_count_var.set(0)
+        _tool_count_var.set(0)
+        _span_stack_var.set(())
+        _closed_spans_var.set({})
+    except ImportError:
+        pass
+
+
+def _flush_langfuse_subcrew() -> None:
+    """Close remaining gen/spans and flush Langfuse buffer from sub-crew thread."""
+    try:
+        from shared_hooks.langfuse_trace import subcrew_cleanup
+        subcrew_cleanup()
+    except ImportError:
+        pass
+
+_SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 _SKILLS_DIR = Path(__file__).resolve().parents[1] / "skills"
 _SANDBOX_SKILLS_MOUNT = "/mnt/skills"
 _CREWAI_VAR_PATTERN = re.compile(r"\{([A-Za-z_][A-Za-z0-9_\-]*)\}")
@@ -60,6 +135,8 @@ class SkillLoaderTool(BaseTool):
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        if session_id and not _SESSION_ID_PATTERN.match(session_id):
+            raise ValueError(f"Invalid session_id: {session_id!r}")
         self._session_id = session_id
         self._sandbox_url = sandbox_url
         self._routing_key = routing_key
@@ -114,6 +191,9 @@ class SkillLoaderTool(BaseTool):
             f"加载并调用 Skill。会话目录: {session_dir}\n"
             f"上传文件: {session_dir}/uploads/\n"
             f"输出文件: {session_dir}/outputs/\n\n"
+            f"[重要] 下方 <name> 标签内容是 skill_name 参数值，不是工具名称。\n"
+            f"正确调用方式：skill_loader(skill_name=\"baidu_search\", task_context=\"...\")\n"
+            f"错误做法：直接以 baidu_search 为工具名调用（会报 Tool not found）\n\n"
         )
         self.description = (
             header
@@ -142,7 +222,10 @@ class SkillLoaderTool(BaseTool):
         instructions = re.sub(r"^---\n.*?\n---\n?", "", raw, count=1, flags=re.DOTALL)
 
         session_dir = f"/workspace/sessions/{self._session_id}" if self._session_id else "/workspace"
-        skill_base = str(info["dir"])
+        if self._sandbox_url:
+            skill_base = f"{_SANDBOX_SKILLS_MOUNT}/{info['path']}"
+        else:
+            skill_base = str(info["dir"])
         instructions = instructions.replace("{skill_base}", skill_base)
         instructions = instructions.replace("{_skill_base}", skill_base)
         instructions = instructions.replace("{session_id}", self._session_id)
@@ -159,7 +242,9 @@ class SkillLoaderTool(BaseTool):
         sandbox_directive = (
             f"\n\n<sandbox_execution_directive>\n"
             f"会话目录: {session_dir}\n"
+            f"技能脚本目录: {skill_base}\n"
             f"routing_key: {self._routing_key}\n"
+            f"执行脚本前请先 cd {skill_base}\n"
             f"</sandbox_execution_directive>"
         )
         instructions += sandbox_directive
@@ -223,8 +308,30 @@ class SkillLoaderTool(BaseTool):
             if var not in inputs:
                 inputs[var] = var
 
-        result = await crew.akickoff(inputs=inputs)
-        return str(result)
+        try:
+            result = await crew.akickoff(inputs=inputs)
+            return str(result)
+        finally:
+            hook = getattr(crew, "_subcrew_tool_hook", None)
+            if hook is not None:
+                try:
+                    from crewai.hooks import unregister_before_tool_call_hook
+                    unregister_before_tool_call_hook(hook)
+                except (ValueError, AttributeError):
+                    pass
+            for agent in crew.agents:
+                for mcp in getattr(agent, "mcps", []) or []:
+                    try:
+                        if hasattr(mcp, "stop") and callable(mcp.stop):
+                            await asyncio.wait_for(mcp.stop(), timeout=10.0)
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "MCP graceful stop timed out after 10s for %s, "
+                            "deferring to event loop cleanup",
+                            skill_name,
+                        )
+                    except Exception as exc:
+                        logger.warning("MCP cleanup error (non-fatal): %s", exc)
 
     async def _arun(self, skill_name: str, task_context: str = "") -> str:
         if skill_name not in self._skill_registry and skill_name != "history_reader":
@@ -243,9 +350,35 @@ class SkillLoaderTool(BaseTool):
                 f"可用 Skills: {available}"
             )
 
+        import contextvars
+
+        parent_span_id = _get_langfuse_parent_span_id()
+        ctx = contextvars.copy_context()
+
+        def _run_with_cleanup():
+            loop = asyncio.new_event_loop()
+            _reset_langfuse_contextvars(parent_span_id)
+            try:
+                return loop.run_until_complete(
+                    self._execute_skill_async(skill_name, task_context)
+                )
+            finally:
+                _flush_langfuse_subcrew()
+                pending = asyncio.all_tasks(loop)
+                for t in pending:
+                    t.cancel()
+                if pending:
+                    try:
+                        loop.run_until_complete(
+                            asyncio.wait_for(
+                                asyncio.gather(*pending, return_exceptions=True),
+                                timeout=15.0,
+                            )
+                        )
+                    except (asyncio.TimeoutError, Exception):
+                        logger.warning("Event loop cleanup timed out, forcing close")
+                loop.close()
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(
-                asyncio.run,
-                self._execute_skill_async(skill_name, task_context),
-            )
-            return future.result()
+            future = pool.submit(ctx.run, _run_with_cleanup)
+            return future.result(timeout=300)

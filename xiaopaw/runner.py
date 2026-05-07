@@ -112,6 +112,7 @@ class Runner:
         key = inbound.routing_key
 
         adapter: CrewObservabilityAdapter | None = None
+        card_msg_id: str | None = None
         try:
             # Slash command intercept
             cmd = inbound.content.strip().split()[0].lower() if inbound.content.strip() else ""
@@ -123,14 +124,15 @@ class Runner:
             # Get or create session
             session = await self._session_mgr.get_or_create(key)
 
-            # Create Hook adapter for this request
+            # ★ L33 接线点 1：为本次请求创建 Hook adapter（每请求一个，session_id 绑定）
+            # adapter 在本函数内通过 ContextVar 传递给 main_crew、skill_loader、sub-crew
             if self._hook_registry:
                 adapter = CrewObservabilityAdapter(
                     registry=self._hook_registry,
                     session_id=session.id,
                 )
 
-            # Hook: BEFORE_TURN
+            # Hook: BEFORE_TURN —— 触发 structured_log + langfuse_trace 创建 trace
             if adapter:
                 adapter.on_turn_start(
                     user_message=inbound.content,
@@ -140,10 +142,17 @@ class Runner:
             # Load history
             history = await self._session_mgr.load_history(session.id)
 
-            # Send thinking indicator
-            await self._sender.send_thinking(key)
+            # Send thinking indicator, save card_msg_id for later update
+            card_msg_id = await self._sender.send_thinking(key)
 
-            # Hook: BEFORE_TOOL_CALL for the agent execution
+            # ★ L33 接线点 2：pre-flight 安全检查
+            # 把整个 Agent 执行包成一个虚拟工具调用 "agent_execution"，
+            # 让 sandbox_guard / permission_gate 对用户原始输入提前过一遍 ——
+            # 否则恶意 prompt 要等到 LLM 决定调真实工具时才会被拦截，浪费 LLM 算力。
+            #
+            # 因为 BEFORE_TOOL_CALL 抛 GuardrailDeny 会被 adapter 的 pending_deny 吞掉
+            # （pending_deny 模式见 crew_adapter），这里手动检查并立即重抛，
+            # 让外层的 except GuardrailDeny 捕获并向用户回复"安全策略拦截"。
             if adapter:
                 adapter.on_before_tool_call(
                     tool_name="agent_execution",
@@ -176,8 +185,11 @@ class Runner:
                     tool_result=reply[:500],
                 )
 
-            # Send reply
-            await self._sender.send(key, reply)
+            # Send reply: update the thinking card if available, else send new card
+            if card_msg_id:
+                await self._sender.update_card(card_msg_id, reply)
+            else:
+                await self._sender.send(key, reply)
 
             # Persist conversation
             await self._session_mgr.append(
@@ -208,24 +220,63 @@ class Runner:
                 )
 
         except GuardrailDeny as deny:
+            # ★ L33 接线点 3：兜底捕获 GuardrailDeny —— 友好告知用户而不是 500 错误
+            # GuardrailDeny 的来源有三处：
+            #   1. pre-flight 检查（上面的 raise pending）
+            #   2. main_crew 内部 step_callback / task_callback 重抛
+            #   3. cleanup() 时的 SESSION_END handler
+            elapsed = time.monotonic() - start
             logger.warning("guardrail deny for %s: %s", key, deny)
-            try:
-                await self._sender.send_text(
-                    key, f"安全策略拦截：{deny.detail or deny.reason_code}"
+            deny_reply = f"安全策略拦截：{deny.detail or deny.reason_code}"
+
+            if adapter and self._hook_registry:
+                self._hook_registry.dispatch(
+                    EventType.AFTER_TURN,
+                    HookContext(
+                        event_type=EventType.AFTER_TURN,
+                        session_id=adapter._session_id,
+                        sender_id=inbound.sender_id,
+                        duration_ms=elapsed * 1000,
+                        metadata={
+                            "user_message": inbound.content[:500],
+                            "reply": deny_reply,
+                            "guardrail_deny": True,
+                            "deny_reason": deny.reason_code,
+                            "deny_detail": deny.detail,
+                        },
+                    ),
                 )
+
+            try:
+                if card_msg_id:
+                    await self._sender.update_card(card_msg_id, deny_reply)
+                else:
+                    await self._sender.send_text(key, deny_reply)
             except Exception:
                 pass
         except Exception:
             logger.exception("handle error for %s", key)
+            error_reply = "抱歉，处理消息时出现了错误，请稍后重试。"
             try:
-                await self._sender.send_text(key, "抱歉，处理消息时出现了错误，请稍后重试。")
+                if card_msg_id:
+                    await self._sender.update_card(card_msg_id, error_reply)
+                else:
+                    await self._sender.send_text(key, error_reply)
             except Exception:
                 pass
         finally:
+            # ★ L33 接线点 4：finally 触发 SESSION_END
+            # adapter.cleanup() 内部 dispatch SESSION_END → 触发：
+            #   - audit_logger.session_end_handler（写本会话安全摘要）
+            #   - langfuse_trace.flush_and_close（强制 flush，机制五）
+            # 必须在 finally 里 —— 即使 except 分支已经 send 了回复给用户，
+            # 我们仍要保证 Langfuse 数据落盘
             if adapter:
                 try:
                     adapter.cleanup()
                 except GuardrailDeny:
+                    # cleanup 也可能抛 deny（pending_deny 重抛），但用户已经收到回复
+                    # 这里的 deny 只用于 audit/log，吞掉即可
                     pass
             bind_trace_id("-")
 
