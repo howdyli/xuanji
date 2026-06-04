@@ -877,19 +877,19 @@ def maybe_compress(messages, *, model_limit: int = 32000, ...):
 
 **测试要点**：
 - `test_compress_preserves_tool_call_pair.py`：构造 assistant.tool_calls + tool 消息分布在 cutoff 两侧，压缩后 fresh_msgs 仍然完整
-- `test_compress_token_count_accurate.py`：Qwen tokenizer 实际 token 数 vs 估算偏差 <10%
+- `test_compress_token_count_accurate.py`：DeepSeek tokenizer 实际 token 数 vs 估算偏差 <10%
 - `test_ctx_json_restore.py`：save + load 往返一致
 
 ---
 
 ### 4.3 token_counter（`xiaopaw/memory/token_counter.py`，v2 新增）
 
-**职责**：精确计数消息 token 数（Qwen 官方 tokenizer 优先）。
+**职责**：精确计数消息 token 数（DeepSeek 官方 tokenizer 优先）。
 
 **三级 fallback 链**（受 [ssot/feature-flags.md#F1](ssot/feature-flags.md) `token_counter_mode` 控制，三值：`qwen_official` / `hf_qwen` / `rough`）：
 
 1. `dashscope.get_tokenizer("qwen-max")` — 首选
-2. `HuggingFace AutoTokenizer.from_pretrained("Qwen/Qwen2-7B-Instruct")` — 离线可用
+2. `HuggingFace AutoTokenizer.from_pretrained("DeepSeek/DeepSeek2-7B-Instruct")` — 离线可用
 3. `rough` — `len(content) // 2` 兜底
 
 **核心接口**：
@@ -904,16 +904,16 @@ def _get_tokenizer():
         try:
             from dashscope import get_tokenizer
             _tokenizer = get_tokenizer("qwen-max")
-            logger.info("Qwen 官方 tokenizer 加载成功")
+            logger.info("DeepSeek 官方 tokenizer 加载成功")
         except Exception:
             try:
                 from transformers import AutoTokenizer
                 _tokenizer = AutoTokenizer.from_pretrained(
-                    "Qwen/Qwen2-7B", trust_remote_code=False, local_files_only=True,
+                    "DeepSeek/DeepSeek2-7B", trust_remote_code=False, local_files_only=True,
                 )
-                logger.info("HuggingFace Qwen tokenizer 加载成功（本地）")
+                logger.info("HuggingFace DeepSeek tokenizer 加载成功（本地）")
             except Exception:
-                logger.warning("Qwen tokenizer 均不可用，降级 rough", exc_info=True)
+                logger.warning("DeepSeek tokenizer 均不可用，降级 rough", exc_info=True)
                 _tokenizer = "rough"
     return _tokenizer
 
@@ -954,7 +954,7 @@ from functools import cache
 @cache
 def _get_llm_client():
     from openai import OpenAI
-    return OpenAI(api_key=_QWEN_API_KEY, base_url=_QWEN_BASE_URL)
+    return OpenAI(api_key=_DEEPSEEK_API_KEY, base_url=_DEEPSEEK_BASE_URL)
 
 @cache
 def _get_embed_client():
@@ -995,7 +995,7 @@ def embed_texts(texts): ...
 
 ### 5.1 AliyunLLM（`xiaopaw/llm/aliyun_llm.py`）
 
-**职责**：CrewAI `BaseLLM` 适配器，通过 DashScope 兼容 OpenAI API 调用 Qwen。
+**职责**：CrewAI `BaseLLM` 适配器，通过 DashScope 兼容 OpenAI API 调用 DeepSeek。
 
 **v2 变化**：
 
@@ -1024,7 +1024,7 @@ def is_image_payload(text: str) -> bool:
 - sync / async 双接口（CrewAI 要求）
 - tenacity 重试（5xx / timeout）
 - function calling / multimodal image
-- `QWEN_DEBUG_PAYLOAD=1` 环境变量输出完整 payload
+- `DEEPSEEK_DEBUG_PAYLOAD=1` 环境变量输出完整 payload
 
 ---
 

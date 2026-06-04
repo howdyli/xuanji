@@ -34,7 +34,7 @@ class TestSearchMemoryE2E:
     """E2E-08: semantic search over conversation history."""
 
     async def test_semantic_recall_and_degradation(
-        self, sandbox_client, qwen_api_key, langfuse_available
+        self, sandbox_client, deepseek_api_key, langfuse_available
     ):
         conversations = [
             "我最近在研究 LangGraph 框架，觉得它的状态管理设计很有意思",
@@ -59,7 +59,7 @@ class TestSearchMemoryE2E:
         assert llm_assert(
             r_recall["reply"],
             "回复提到了 LangGraph 和 CrewAI 的对比观点",
-            api_key=qwen_api_key,
+            api_key=deepseek_api_key,
         ), f"Semantic recall failed. Reply: {r_recall['reply'][:500]}"
 
         r_miss = await send_message(
@@ -71,7 +71,7 @@ class TestSearchMemoryE2E:
         assert llm_assert(
             r_miss["reply"],
             "回复表示未找到相关记忆或没有相关讨论记录",
-            api_key=qwen_api_key,
+            api_key=deepseek_api_key,
         ), f"Degradation failed. Reply: {r_miss['reply'][:500]}"
 
         if langfuse_available:

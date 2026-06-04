@@ -21,6 +21,7 @@ NFKC Unicode 归一化 + 最多 3 轮 URL 解码 + null byte 拦截。
 这是为了防止攻击者用 %2E%2E%2F 这种编码绕过正则。
 """
 
+import logging
 import re
 import sys
 import unicodedata
@@ -28,6 +29,8 @@ from collections import deque
 from urllib.parse import unquote
 
 from xiaopaw.hook_framework.registry import DenyReason, GuardrailDeny
+
+logger = logging.getLogger(__name__)
 
 # ── 4 组检测正则 ──────────────────────────────────────────────
 # 灵感来源：Claude Code 的 cyberRiskInstruction.ts —— 在工业实战里被反复打磨的清单
@@ -57,9 +60,20 @@ _PROMPT_INJECTION = re.compile(
     re.IGNORECASE,
 )
 
-# 沙箱原生工具的豁免标记：sandbox_xxx / mcp_xxx 这类工具运行在隔离容器里，
-# 它们的输入里出现 ; | 之类是合法的 shell 命令（如 git 命令组合），不应误拦
-_SANDBOX_TOOL_MARKER = re.compile(r"sandbox_|mcp_")
+# Shell 注入检查的豁免列表 —— 以下“工具”本身不是 shell，输入是自然语言，不应用 [;|&&`$(] 规则：
+#   sandbox_xxx / mcp_xxx ：在隔离容器里跑的 shell，出现这些字符是合法的。
+#   agent_execution    ：Runner 包装整个 Agent 执行的虚拟 pre-flight 检查点，
+#                       输入是用户在前端发的自然语言（可能包含 markdown 表格、
+#                       列表分隔符 ; 、中文全角括号）。仅这一环节豁免 shell injection；
+#                       路径穿越/危险命令/Prompt 注入等其他检查依然生效。
+#   skill_loader       ：LLM 传给子 Crew 的任务描述，是自然语言/JSON，不是 shell。
+#   history_reader     ：只接受 page / page_size 参数。
+_SHELL_INJECTION_EXEMPT = re.compile(
+    r"sandbox_|mcp_"
+    r"|^agent_execution$"
+    r"|^skill_loader$"
+    r"|^history_reader$"
+)
 
 
 def _normalize(raw: str) -> str:
@@ -127,8 +141,10 @@ class SandboxGuard:
             self._record("dangerous_command", ctx.tool_name, text)
             raise GuardrailDeny(DenyReason.SANDBOX_VIOLATION, "Dangerous command detected")
 
-        # 沙箱原生工具豁免：sandbox_xxx / mcp_xxx 在隔离容器里跑 shell 是合法的
-        if not _SANDBOX_TOOL_MARKER.search(ctx.tool_name) and _SHELL_INJECTION.search(text):
+        # Shell injection 检查豁免：sandbox_xxx / mcp_xxx 是在隔离容器里的真 shell；
+        # agent_execution / skill_loader / history_reader 本身不是 shell，输入是
+        # 自然语言、JSON 或参数对象，误拦率高。
+        if not _SHELL_INJECTION_EXEMPT.search(ctx.tool_name) and _SHELL_INJECTION.search(text):
             self._record("shell_injection", ctx.tool_name, text)
             raise GuardrailDeny(DenyReason.SANDBOX_VIOLATION, "Shell injection detected")
 
@@ -145,16 +161,23 @@ class SandboxGuard:
             raise GuardrailDeny(DenyReason.PROMPT_INJECTION, "Prompt injection detected")
 
     def _record(self, violation_type: str, tool_name: str, text: str):
+        preview = text[:200]
+        # 诊断为重点：把被拦截的 tool_name 和输入预览输出到主日志，
+        # 运维不需额外启用 SECURITY_AUDIT_FILE 就能定位误拦
+        logger.warning(
+            "sandbox_guard deny: type=%s tool=%s preview=%r",
+            violation_type, tool_name, preview,
+        )
         self._violations.append({
             "type": violation_type,
             "tool": tool_name,
-            "input_preview": text[:200],
+            "input_preview": preview,
         })
         if self._audit:
             self._audit.record_event(
                 f"sandbox_{violation_type}",
                 tool=tool_name,
-                input_preview=text[:200],
+                input_preview=preview,
             )
 
     def get_metrics(self) -> dict:

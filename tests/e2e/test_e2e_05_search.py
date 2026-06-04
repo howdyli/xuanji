@@ -29,7 +29,7 @@ class TestSearchSkillE2E:
     """E2E-05: Agent -> SkillLoaderTool -> Sub-Crew -> Sandbox MCP -> search results."""
 
     async def test_search_returns_real_results(
-        self, sandbox_client, qwen_api_key, langfuse_available
+        self, sandbox_client, deepseek_api_key, langfuse_available
     ):
         result = await send_message(
             sandbox_client,
@@ -43,7 +43,7 @@ class TestSearchSkillE2E:
         assert llm_assert(
             reply,
             "回复与 Python 3.13 相关，且包含具体信息（如 PEP 编号、特性名称、发布计划等），不是纯粹的'我不知道'",
-            api_key=qwen_api_key,
+            api_key=deepseek_api_key,
         ), f"LLM-as-Judge failed. Reply: {reply[:500]}"
 
         if langfuse_available:

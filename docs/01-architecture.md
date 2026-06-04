@@ -69,7 +69,7 @@ graph TB
 
     subgraph External[外部服务]
         FS_API[飞书 REST API]
-        QWEN[Qwen DashScope]
+        DEEPSEEK[DeepSeek DashScope]
         BAIDU[百度千帆]
         SB[AIO-Sandbox MCP]
     end
@@ -94,7 +94,7 @@ graph TB
     SC --> SB
     SB --> WS
 
-    MC -->|extract+embed| QWEN
+    MC -->|extract+embed| DEEPSEEK
     MC -->|async_index_turn| PGV
 
     Runner --> FS
@@ -107,7 +107,7 @@ graph TB
     CLS --> TRACE
     CLS --> SESS
 
-    Agent --> QWEN
+    Agent --> DEEPSEEK
     SC -.baidu_search.-> BAIDU
 
     TR -.trace_id.-> LOG
@@ -207,8 +207,8 @@ sequenceDiagram
     FS->>F: PATCH /card
 
     Note over MC, PGV: 异步建索引（不阻塞）
-    MC->>QWEN: extract_summary_and_tags (qwen3-max)
-    MC->>QWEN: embed_texts (text-embedding-v3)
+    MC->>DEEPSEEK: extract_summary_and_tags (deepseek-v4-flash)
+    MC->>DEEPSEEK: embed_texts (text-embedding-v3)
     MC->>PGV: upsert_memory ON CONFLICT DO NOTHING
 ```
 
@@ -307,7 +307,7 @@ flowchart LR
 │ Sub-Crew (Sandbox) ← MCP 白名单受控                        │
 │ pgvector  ← DB 权限最小化（memories 表 SELECT/INSERT）      │
 │ workspace ← mount 精确到 {sid}/ 子目录                      │
-│ 飞书/Qwen/百度 API ← 专用 App Token / API Key               │
+│ 飞书/DeepSeek/百度 API ← 专用 App Token / API Key               │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -432,12 +432,12 @@ flowchart LR
 - **后果**：MemoryAwareCrew 不感知 Task 生命周期，更符合单一职责；Runner 负责所有异步 task 的 shutdown gather
 - **备选**：引入独立 TaskManager 组件（过度工程，v2 不做）
 
-**ADR-004：Token 计数优先使用 Qwen 官方 tokenizer，tiktoken 仅作兜底**
+**ADR-004：Token 计数优先使用 DeepSeek 官方 tokenizer，tiktoken 仅作兜底**
 
 - **决策**：首选 `dashscope.get_tokenizer("qwen-max")`，不可用时 `tiktoken.cl100k_base`，最终降级 `len//2`
-- **理由**：Phase 0 校准报告显示 `cl100k_base` 对 Qwen 中文偏差 15-25%，远超 v1 声称的 <10%
+- **理由**：Phase 0 校准报告显示 `cl100k_base` 对 DeepSeek 中文偏差 15-25%，远超 v1 声称的 <10%
 - **后果**：压缩阈值 45% 判断更准确；启动时惰性加载避免无网环境崩溃
-- **备选**：HuggingFace `Qwen/Qwen2-7B` tokenizer（本地文件，零网络）作为 Qwen 官方 tokenizer 的备胎
+- **备选**：HuggingFace `DeepSeek/DeepSeek2-7B` tokenizer（本地文件，零网络）作为 DeepSeek 官方 tokenizer 的备胎
 
 **ADR-005：飞书限流识别走 HTTP 层 + 真实错误码**
 
@@ -469,7 +469,7 @@ flowchart LR
 
 **ADR-009：凭证全部轮换作为 Phase 0 硬前提**
 
-- **决策**：`git filter-repo` 执行前必须完成 DB / 飞书 / Qwen / 百度 / metrics token 全部轮换
+- **决策**：`git filter-repo` 执行前必须完成 DB / 飞书 / DeepSeek / 百度 / metrics token 全部轮换
 - **理由**：`git filter-repo` 不可回滚；已 clone/fork/CI cache 里的旧凭证仍有效
 - **后果**：Phase 0 需要 1-1.5 天（与外部平台协调）
 - **备选**：不清 git 历史（留下永久安全债务，拒绝）

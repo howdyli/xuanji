@@ -8,7 +8,7 @@ import logging
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from xiaopaw.session.models import MessageEntry, RoutingEntry, SessionEntry
+from xiaopaw.session.models import MessageEntry, RoutingEntry, SessionEntry, _new_dated_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +76,61 @@ class SessionManager:
                         return s
             return await self._create_session_locked(routing_key)
 
+    async def activate_session(self, session_id: str, routing_key: str) -> SessionEntry | None:
+        """Activate an existing session for the given routing_key.
+
+        If the session belongs to a different routing_key, it will be
+        adopted under the new one. Returns None if session_id doesn't exist.
+        """
+        target: SessionEntry | None = None
+        # Search across all routing keys
+        for rk, entry in list(self._index.items()):
+            for s in entry.sessions:
+                if s.id == session_id:
+                    target = s
+                    break
+            if target:
+                break
+        if target is None:
+            return None
+
+        async with self._index_lock:
+            # Set active session for the requested routing_key
+            entry = self._index.get(routing_key)
+            existing_ids = {s.id for s in entry.sessions} if entry else set()
+            if session_id not in existing_ids:
+                # Adopt session into this routing_key
+                sessions = list(entry.sessions) + [target] if entry else [target]
+                self._index[routing_key] = RoutingEntry(
+                    active_session_id=session_id, sessions=sessions
+                )
+            else:
+                self._index[routing_key] = RoutingEntry(
+                    active_session_id=session_id, sessions=entry.sessions
+                )
+            self._save_index()
+        return target
+
+    async def get_session_by_id(self, session_id: str) -> SessionEntry | None:
+        """Find a session by ID regardless of routing_key."""
+        for rk, entry in self._index.items():
+            for s in entry.sessions:
+                if s.id == session_id:
+                    return s
+        return None
+
     async def create_new_session(self, routing_key: str) -> SessionEntry:
         async with self._index_lock:
             return await self._create_session_locked(routing_key)
 
     async def _create_session_locked(self, routing_key: str) -> SessionEntry:
-        session = SessionEntry()
+        # Collect all existing session IDs for date-based numbering
+        existing_ids: set[str] = set()
+        for entry in self._index.values():
+            for s in entry.sessions:
+                existing_ids.add(s.id)
+
+        session = SessionEntry(id=_new_dated_session_id(existing_ids))
         entry = self._index.get(routing_key)
         if entry:
             sessions = list(entry.sessions) + [session]
@@ -154,15 +203,20 @@ class SessionManager:
             await asyncio.to_thread(_write)
 
         async with self._index_lock:
-            entry = self._index.get("")
             for rk, re_ in self._index.items():
                 if re_.active_session_id == session_id:
-                    sessions = [
-                        replace(s, message_count=s.message_count + 2)
-                        if s.id == session_id
-                        else s
-                        for s in re_.sessions
-                    ]
+                    sessions = []
+                    for s in re_.sessions:
+                        if s.id == session_id:
+                            # 首条消息（message_count == 0）：提取 user 消息前 50 字符作标题
+                            kwargs: dict = {"message_count": s.message_count + 2}
+                            if s.message_count == 0:
+                                title_raw = user.strip()[:50]
+                                # 去掉多余空白，保留可读片段
+                                kwargs["title"] = " ".join(title_raw.split())
+                            sessions.append(replace(s, **kwargs))
+                        else:
+                            sessions.append(s)
                     self._index[rk] = replace(re_, sessions=sessions)
                     self._save_index()
                     break
@@ -180,3 +234,44 @@ class SessionManager:
             if s.id == entry.active_session_id:
                 return s
         return None
+
+    def list_all_sessions(self) -> list[dict]:
+        """Return all sessions across all routing keys, newest first.
+
+        Each dict has keys expected by the frontend API: id, title,
+        message_count, updated_at (str), routing_key.
+        """
+        result: list[dict] = []
+        for rk, entry in self._index.items():
+            for s in entry.sessions:
+                title = s.title
+                # Backfill: if session has messages but no title, read first user message
+                if not title and s.message_count > 0:
+                    title = self._extract_title_from_jsonl(s.id)
+                result.append({
+                    "id": s.id,
+                    "title": title,
+                    "message_count": s.message_count,
+                    "updated_at": s.created_at,
+                    "routing_key": rk,
+                })
+        # Sort newest first (ISO string comparison works for same zone)
+        result.sort(key=lambda x: x["updated_at"], reverse=True)
+        return result
+
+    def _extract_title_from_jsonl(self, session_id: str) -> str:
+        """Extract title from the first user message in the JSONL file."""
+        jsonl_path = self._sessions_dir / f"{session_id}.jsonl"
+        if not jsonl_path.exists():
+            return ""
+        try:
+            line = jsonl_path.read_text(encoding="utf-8").strip().split("\n")[0]
+            if not line:
+                return ""
+            data = json.loads(line)
+            if data.get("role") == "user" and data.get("content"):
+                raw = data["content"].strip()[:50]
+                return " ".join(raw.split())
+        except Exception:
+            pass
+        return ""

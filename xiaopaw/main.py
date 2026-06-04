@@ -1,4 +1,4 @@
-"""XiaoPaw v2 entry point."""
+"""玄机 entry point."""
 
 from __future__ import annotations
 
@@ -35,13 +35,52 @@ async def main() -> None:
     from xiaopaw.api.capture_sender import CaptureSender
     from xiaopaw.cleanup.service import CleanupService
     from xiaopaw.cron.service import CronService
-    from xiaopaw.cron.storage import CronStorage
     from xiaopaw.hook_framework.loader import HookLoader
     from xiaopaw.hook_framework.registry import HookRegistry
     from xiaopaw.observability.metrics_server import start_metrics_server
     from xiaopaw.observability.security import RateLimiter, ReplayCache
     from xiaopaw.runner import Runner
     from xiaopaw.session.manager import SessionManager
+
+    # Frontend PostgreSQL store (optional, gracefully falls back)
+    pg_store = None
+    if cfg.frontend.enabled and cfg.memory.db_dsn:
+        from xiaopaw.frontend.store import PGStore
+        pg_store = PGStore(dsn=cfg.memory.db_dsn)
+
+    # Skill registry (scans builtin + user dirs, syncs metadata to DB if available)
+    skill_registry = None
+    user_skills_dir: Path | None = None
+    market_registry = None
+    market_sync = None
+    if cfg.frontend.enabled:
+        from xiaopaw.skills_mgmt.market import MarketRegistry, MarketSync
+        from xiaopaw.skills_mgmt.registry import SkillRegistry
+        user_skills_dir = Path(cfg.skills.user_dir)
+        if not user_skills_dir.is_absolute():
+            user_skills_dir = Path(__file__).resolve().parent.parent / cfg.skills.user_dir
+        skill_registry = SkillRegistry(
+            builtin_dir=Path(__file__).resolve().parent / "skills",
+            user_dir=user_skills_dir,
+            pg_store=pg_store,
+        )
+        skill_registry.sync_to_db()
+
+        # Market layer: works with or without PG (falls back to in-memory cache).
+        if cfg.skill_market.enabled:
+            market_sync = MarketSync(
+                pg_store=pg_store,
+                vercel_index_url=cfg.skill_market.vercel_index_url,
+                clawhub_index_url=cfg.skill_market.clawhub_index_url,
+                fetch_timeout_seconds=cfg.skill_market.fetch_timeout_seconds,
+            )
+            market_registry = MarketRegistry(
+                pg_store=pg_store,
+                skill_registry=skill_registry,
+                install_max_bytes=cfg.skill_market.install_max_bytes,
+                fetch_timeout_seconds=cfg.skill_market.fetch_timeout_seconds,
+                market_sync=market_sync,
+            )
 
     session_mgr = SessionManager(
         data_dir=data_dir,
@@ -98,6 +137,8 @@ async def main() -> None:
         max_history_turns=cfg.session.max_history_turns,
         sandbox_url=cfg.sandbox.url,
         flags=cfg.feature_flags,
+        skill_registry=skill_registry,
+        user_skills_dir=user_skills_dir,
     )
 
     # Load Hook framework (v3 layer)
@@ -129,7 +170,12 @@ async def main() -> None:
     )
 
     # Start cron service
-    cron_storage = CronStorage(data_dir=data_dir, filelock_timeout=cfg.cron.filelock_timeout_s)
+    from xiaopaw.cron.automation import AutomationRegistry
+    automation_registry = AutomationRegistry(
+        db_path=data_dir / "auth.db",
+        data_dir=data_dir,
+    )
+    cron_storage = automation_registry.storage
     cron_svc = CronService(
         storage=cron_storage,
         dispatch_fn=runner.dispatch,
@@ -148,6 +194,30 @@ async def main() -> None:
     )
     if cfg.cleanup.enabled:
         await cleanup_svc.start()
+
+    # Start market sync background task (every sync_interval_hours).
+    # Inline asyncio task; first run is delayed 5s so PG handshake completes.
+    market_sync_task: asyncio.Task | None = None
+    if market_sync is not None:
+        async def _market_sync_loop() -> None:
+            await asyncio.sleep(5.0)
+            interval = cfg.skill_market.sync_interval_hours * 3600
+            while True:
+                try:
+                    await market_sync.sync_to_db()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("market sync failed")
+                await asyncio.sleep(interval)
+
+        market_sync_task = asyncio.create_task(
+            _market_sync_loop(), name="market-sync"
+        )
+        logger.info(
+            "market sync scheduled (interval=%.1fh)",
+            cfg.skill_market.sync_interval_hours,
+        )
 
     # Start TestAPI (dev only)
     test_api_runner = None
@@ -171,6 +241,50 @@ async def main() -> None:
             cfg.debug.test_api_host, cfg.debug.test_api_port,
         )
 
+    # Start Frontend server (static files + REST API)
+    frontend_runner = None
+    if cfg.frontend.enabled:
+        from xiaopaw.frontend.auth import UserAuth
+        from xiaopaw.frontend.server import create_frontend_app
+
+        # Initialize user auth (SQLite)
+        user_auth = UserAuth(data_dir / "auth.db")
+
+        # Initialize expert registry (reuses auth.db)
+        from xiaopaw.frontend.expert import ExpertRegistry
+        expert_registry = ExpertRegistry(data_dir / "auth.db")
+
+        # Initialize channel manager (LLM provider management)
+        from xiaopaw.llm.channel_manager import ChannelManager
+        channel_manager = ChannelManager(config_path=data_dir / "channels.json")
+
+        frontend_app = create_frontend_app(
+            runner=runner,
+            sender=sender,
+            session_mgr=session_mgr,
+            pg_store=pg_store,
+            token=cfg.debug.test_api_token,
+            skill_registry=skill_registry,
+            skills_max_upload_bytes=cfg.skills.max_upload_mb * 1024 * 1024,
+            market_registry=market_registry,
+            market_sync=market_sync,
+            workspace_dir=str(workspace_dir.resolve()),
+            user_auth=user_auth,
+            expert_registry=expert_registry,
+            automation_registry=automation_registry,
+            channel_manager=channel_manager,
+        )
+        frontend_runner = web.AppRunner(frontend_app)
+        await frontend_runner.setup()
+        fe_site = web.TCPSite(
+            frontend_runner, cfg.frontend.host, cfg.frontend.port
+        )
+        await fe_site.start()
+        logger.info(
+            "Frontend listening on http://%s:%d",
+            cfg.frontend.host, cfg.frontend.port,
+        )
+
     # Start Feishu listener (production)
     feishu_listener = None
     if not (is_dev and cfg.debug.enable_test_api):
@@ -189,7 +303,7 @@ async def main() -> None:
         )
         await feishu_listener.start()
 
-    logger.info("XiaoPaw v2 started (env=%s)", "dev" if is_dev else "production")
+    logger.info("玄机 started (env=%s)", "dev" if is_dev else "production")
 
     # Wait for shutdown signal
     stop = asyncio.Event()
@@ -205,9 +319,19 @@ async def main() -> None:
         await feishu_listener.stop()
     await cron_svc.stop()
     await cleanup_svc.stop()
+    if market_sync_task is not None:
+        market_sync_task.cancel()
+        try:
+            await market_sync_task
+        except asyncio.CancelledError:
+            pass
     await runner.shutdown()
     if test_api_runner:
         await test_api_runner.cleanup()
+    if frontend_runner:
+        await frontend_runner.cleanup()
+    if pg_store:
+        pg_store.close()
     await metrics_runner.cleanup()
 
     logger.info("XiaoPaw v2 shutdown complete")

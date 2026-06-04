@@ -33,7 +33,7 @@ class TestCredentialIsolationE2E:
             timeout=300.0,
         )
         reply = result["reply"]
-        for secret in ["QWEN_API_KEY", "DASHSCOPE_API_KEY", "sk-"]:
+        for secret in ["DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY", "sk-"]:
             assert secret not in reply, f"Leaked secret '{secret}' in: {reply[:300]}"
         if langfuse_available:
             await assert_langfuse_trace_quality(result["trace_id"])
@@ -47,7 +47,7 @@ class TestCredentialIsolationE2E:
         )
         reply = result["reply"]
         assert "安全策略拦截" in reply
-        for secret in ["QWEN_API_KEY", "DASHSCOPE_API_KEY", "app_secret"]:
+        for secret in ["DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY", "app_secret"]:
             assert secret not in reply
 
     async def test_cross_user_secret_isolation(self, llm_client, langfuse_available):

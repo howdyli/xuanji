@@ -9,6 +9,11 @@
 - warn  ：放行 + 写审计日志（"调用了，但记录在案"）
 - allow ：静默放行
 
+【权限模式】借鉴 Proma 的三模式设计：
+- auto             ：按 security.yaml 配置走默认 deny/warn/allow（生产默认模式）
+- ask_always       ：所有工具调用都走 warn 路径（调试/审计模式）
+- bypass_permissions：所有非 deny 工具静默放行（受信环境，如 CI/CD 自动化）
+
 【Default-Deny 原则】
 未在 security.yaml 中显式声明的工具走 default。
 **default 应该设成 warn 或 deny**，绝不能默认 allow——
@@ -29,13 +34,36 @@ import yaml
 from xiaopaw.hook_framework.registry import DenyReason, GuardrailDeny
 
 
+# ---- 权限模式常量 ----
+class PermissionMode:
+    """权限模式枚举（字符串常量，兼容 YAML 配置）。"""
+    AUTO = "auto"                        # 按配置走 deny/warn/allow
+    ASK_ALWAYS = "ask_always"            # 所有工具走 warn（审计模式）
+    BYPASS_PERMISSIONS = "bypass_permissions"  # 全部放行（受信环境）
+
+
+# 安全工具白名单：即使在 ask_always 模式下也静默放行的工具
+SAFE_TOOLS: frozenset[str] = frozenset({
+    "intermediate_answer",    # 中间回复工具
+    "skill_loader",           # 技能加载器（读取操作）
+    "history_reader",         # 历史记录读取
+})
+
+
 class PermissionGate:
-    def __init__(self, tools: dict[str, str] | None = None, default: str = "warn", audit=None):
+    def __init__(
+        self,
+        tools: dict[str, str] | None = None,
+        default: str = "warn",
+        audit=None,
+        mode: str = PermissionMode.AUTO,
+    ):
         self._tool_permissions: dict[str, str] = {
             k.lower(): v.lower() for k, v in (tools or {}).items()
         }
         self._default = default.lower()
         self._audit = audit
+        self._mode = mode
         self.decisions: deque[dict] = deque(maxlen=10000)
 
     @classmethod
@@ -54,8 +82,30 @@ class PermissionGate:
             audit=audit,
         )
 
+    def set_mode(self, mode: str) -> None:
+        """动态切换权限模式。
+
+        支持运行时切换（如从 auto 切到 ask_always 进行调试）。
+        """
+        if mode not in (
+            PermissionMode.AUTO,
+            PermissionMode.ASK_ALWAYS,
+            PermissionMode.BYPASS_PERMISSIONS,
+        ):
+            raise ValueError(f"Unknown permission mode: {mode}")
+        self._mode = mode
+
+    @property
+    def mode(self) -> str:
+        return self._mode
+
     def before_tool_handler(self, ctx):
         """BEFORE_TOOL_CALL 入口 —— 查权限矩阵 + 记录决策。
+
+        【权限模式处理逻辑】
+        1. bypass_permissions：所有非显式 deny 的工具静默放行
+        2. ask_always：所有非安全白名单工具升级为 warn
+        3. auto：按 security.yaml 配置走默认 deny/warn/allow
 
         【policy_source 字段的意义】
         审计日志里区分 "explicit"（显式声明）和 "default"（走默认）很重要——
@@ -66,11 +116,30 @@ class PermissionGate:
         permission = self._tool_permissions.get(tool, self._default)
         policy_source = "explicit" if tool in self._tool_permissions else "default"
 
+        # ---- 权限模式覆盖 ----
+        if self._mode == PermissionMode.BYPASS_PERMISSIONS:
+            # bypass 模式：deny 仍然生效（安全底线），其他全部放行
+            if permission == "deny" and policy_source == "explicit":
+                pass  # 显式 deny 不可绕过
+            else:
+                permission = "allow"
+                policy_source = "bypass"
+
+        elif self._mode == PermissionMode.ASK_ALWAYS:
+            # ask_always 模式：安全白名单工具仍放行，其他升级为 warn
+            if tool in SAFE_TOOLS:
+                permission = "allow"
+                policy_source = "safe_tool"
+            elif permission != "deny":
+                permission = "warn"
+                policy_source = "ask_always"
+
         # 每次决策都记一笔，便于后续 get_metrics() 统计 allow/warn/deny 比例
         decision = {
             "tool": ctx.tool_name,
             "permission": permission,
             "policy_source": policy_source,
+            "mode": self._mode,
         }
         self.decisions.append(decision)
 

@@ -72,8 +72,8 @@ v2 测试金字塔分 5 层，自底向上：
 | 性能 | 1 基线 | 每次 release candidate + 72h canary | 30min | 全栈 |
 
 **分层原则**：
-- 单元层必须**全 mock** 外部依赖（Qwen / 飞书 / pgvector / sandbox / 文件系统可选 mock 可选 tmp_path）。
-- 集成层可调真实 Qwen / 真实 pgvector / 真实 sandbox，以 `pytest.mark` 控制启用。
+- 单元层必须**全 mock** 外部依赖（DeepSeek / 飞书 / pgvector / sandbox / 文件系统可选 mock 可选 tmp_path）。
+- 集成层可调真实 DeepSeek / 真实 pgvector / 真实 sandbox，以 `pytest.mark` 控制启用。
 - 故障注入属于集成层的**破坏性子集**，用独立 fixture 注入异常。
 - 安全测试分两路：单元层的模式匹配（无依赖）+ E2E 的真实攻击场景。
 - 性能基准不进 PR 必经门，但 release candidate 必跑。
@@ -110,7 +110,7 @@ freezegun = "~=1.5"              # 时间冻结
 | `pytest-xdist` | 并行执行 | 单元套件 `pytest -n auto` |
 | `hypothesis` | 属性测试 | 压缩算法、tokenizer 容错、BLOCKED_PATTERNS |
 | `testcontainers` | 动态容器 | pgvector 集成测试（避免共享状态） |
-| `respx` | httpx mock | Qwen / 百度 / 飞书 REST 出站 |
+| `respx` | httpx mock | DeepSeek / 百度 / 飞书 REST 出站 |
 | `freezegun` | 时间冻结 | RateLimiter / ReplayCache / Cron next_run |
 
 > **平台约束（v2.1）**：`pytest-memray` 仅支持 **Linux / macOS**，不支持 Windows。
@@ -135,7 +135,7 @@ addopts = [
     "--cov-fail-under=88",
 ]
 markers = [
-    "llm: requires real Qwen API (set QWEN_API_KEY)",
+    "llm: requires real DeepSeek API (set DEEPSEEK_API_KEY)",
     "sandbox: requires AIO-Sandbox on localhost:8080",
     "pgvector: requires pgvector on localhost:5432",
     "feishu: requires real Feishu app credentials",
@@ -297,7 +297,7 @@ def tmp_workspace(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def mock_qwen() -> MagicMock:
-    """默认返回固定字符串的 Qwen client（各用例可 override）。"""
+    """默认返回固定字符串的 DeepSeek client（各用例可 override）。"""
     client = MagicMock()
     client.chat = AsyncMock(return_value={"content": "mocked reply", "usage": {"total_tokens": 10}})
     client.embed = AsyncMock(return_value=[[0.1] * 1024])
@@ -335,7 +335,7 @@ async def runner(session_mgr):
 
 | Marker | 依赖 | CI 行为 | 本地默认 |
 |---|---|---|---|
-| `@pytest.mark.llm` | `QWEN_API_KEY` env | nightly 必跑，PR 跳过 | 跳过 |
+| `@pytest.mark.llm` | `DEEPSEEK_API_KEY` env | nightly 必跑，PR 跳过 | 跳过 |
 | `@pytest.mark.sandbox` | AIO-Sandbox on `localhost:8080` | PR 必跑（CI 起容器） | 需手动起 sandbox |
 | `@pytest.mark.pgvector` | pgvector on `localhost:5432` | PR 必跑（testcontainers 起） | testcontainers 自动 |
 | `@pytest.mark.feishu` | 飞书 app + 测试群 | release PR 必跑 | 跳过 |
@@ -354,8 +354,8 @@ import httpx
 
 @pytest.fixture(autouse=True)
 def _check_llm(request):
-    if "llm" in request.keywords and not os.getenv("QWEN_API_KEY"):
-        pytest.skip("QWEN_API_KEY not set")
+    if "llm" in request.keywords and not os.getenv("DEEPSEEK_API_KEY"):
+        pytest.skip("DEEPSEEK_API_KEY not set")
 
 @pytest.fixture(autouse=True)
 def _check_sandbox(request):
@@ -420,7 +420,7 @@ async def test_session_append_on_enospc_raises_but_keeps_loop(session_mgr, runne
 
 ### 5.2 LLM 5xx / Timeout / Rate Limit
 
-目标：Qwen 返回 5xx / `httpx.TimeoutException` / 429 时，`aliyun_llm` 按 tenacity 重试，最终成功或显式失败，不阻塞 Runner。
+目标：DeepSeek 返回 5xx / `httpx.TimeoutException` / 429 时，`aliyun_llm` 按 tenacity 重试，最终成功或显式失败，不阻塞 Runner。
 
 ```python
 # tests/integration/fault_inject/test_llm_5xx_timeout.py
@@ -431,7 +431,7 @@ import respx
 @pytest.mark.chaos
 @pytest.mark.asyncio
 async def test_llm_5xx_then_ok_retries_and_succeeds():
-    with respx.mock(base_url="https://dashscope.aliyuncs.com") as router:
+    with respx.mock(base_url="https://api.deepseek.com") as router:
         route = router.post("/api/v1/services/aigc/text-generation/generation")
         route.side_effect = [
             httpx.Response(503, json={"error": "overloaded"}),
@@ -439,7 +439,7 @@ async def test_llm_5xx_then_ok_retries_and_succeeds():
             httpx.Response(200, json={"output": {"text": "ok"}, "usage": {"total_tokens": 5}}),
         ]
         from xiaopaw.llm.aliyun_llm import AliyunLLM
-        llm = AliyunLLM(api_key="sk-test", model="qwen3-max")
+        llm = AliyunLLM(api_key="sk-test", model="deepseek-v4-flash")
         reply = await llm.chat([{"role": "user", "content": "hi"}])
         assert reply["content"] == "ok"
         assert route.call_count == 3
@@ -464,11 +464,11 @@ def build_llm_retry(max_retries: int = 3) -> AsyncRetrying:
 @pytest.mark.asyncio
 async def test_llm_timeout_escalates_after_max_retries(mock_qwen):
     from xiaopaw.llm.aliyun_llm import AliyunLLM
-    with respx.mock(base_url="https://dashscope.aliyuncs.com") as router:
+    with respx.mock(base_url="https://api.deepseek.com") as router:
         route = router.post("/api/v1/services/aigc/text-generation/generation").mock(
             side_effect=httpx.TimeoutException("timeout")
         )
-        llm = AliyunLLM(api_key="sk-test", model="qwen3-max", max_retries=3)
+        llm = AliyunLLM(api_key="sk-test", model="deepseek-v4-flash", max_retries=3)
         with pytest.raises(httpx.TimeoutException):  # 原始异常，不是 RetryError
             await llm.chat([{"role": "user", "content": "hi"}])
         assert route.call_count == 3
@@ -477,12 +477,12 @@ async def test_llm_timeout_escalates_after_max_retries(mock_qwen):
 @pytest.mark.asyncio
 async def test_llm_429_triggers_backoff_metric():
     from xiaopaw.observability.metrics import EXTERNAL_API_RETRY
-    with respx.mock(base_url="https://dashscope.aliyuncs.com") as router:
+    with respx.mock(base_url="https://api.deepseek.com") as router:
         router.post("/api/v1/services/aigc/text-generation/generation").mock(
             return_value=httpx.Response(429, headers={"Retry-After": "1"})
         )
         from xiaopaw.llm.aliyun_llm import AliyunLLM
-        llm = AliyunLLM(api_key="sk-test", model="qwen3-max", max_retries=2)
+        llm = AliyunLLM(api_key="sk-test", model="deepseek-v4-flash", max_retries=2)
         before = EXTERNAL_API_RETRY.labels(api="qwen").get()
         with pytest.raises(Exception):
             await llm.chat([{"role": "user", "content": "hi"}])
@@ -1109,7 +1109,7 @@ pytest --cov=xiaopaw.session.manager --cov-report=term-missing tests/unit/sessio
 
 ## 12. Mock 策略
 
-### 12.1 Qwen
+### 12.1 DeepSeek
 
 **单元层**：`AsyncMock` 替代 `AliyunLLM.chat` / `.embed`。
 
@@ -1123,7 +1123,7 @@ def qwen_stub():
     return stub
 ```
 
-**集成层**：`respx` 拦截 `https://dashscope.aliyuncs.com`，按 route 返回真实响应 schema。
+**集成层**：`respx` 拦截 `https://api.deepseek.com`，按 route 返回真实响应 schema。
 
 **准则**：**永不在单元层跑真实 LLM**；集成层 `@pytest.mark.llm` 才允许。
 
@@ -1180,7 +1180,7 @@ def pgvector_dsn():
 
 ### 13.1 SLO（与 05-concurrency §11 对齐）
 
-> **v2.1 重校准（P3-5）**：v2.0 把 100 rk 并发 p95 目标定 `<30s` 是**基于 stub LLM** 得出的，在真实 Qwen 下 p95 常打到 40–60s（首 token 延迟 + 长输出），按原阈值跑 release gate 会 false-fail。v2.1 把 SLO 拆两档：
+> **v2.1 重校准（P3-5）**：v2.0 把 100 rk 并发 p95 目标定 `<30s` 是**基于 stub LLM** 得出的，在真实 DeepSeek 下 p95 常打到 40–60s（首 token 延迟 + 长输出），按原阈值跑 release gate 会 false-fail。v2.1 把 SLO 拆两档：
 > - **带真实 LLM**：端到端 p95 **<60s**，与 05-concurrency §11 对齐。
 > - **stub LLM（CI / pre-merge 压测）**：端到端 p95 **<5s**（stub 立即返回固定字符串）。
 > - `scripts/load_test.py` 必须接受 `--mode {real,stub}` 参数，CI 默认 `stub`，release canary 用 `real`。
@@ -1189,7 +1189,7 @@ def pgvector_dsn():
 | 指标 | 目标（real LLM） | 目标（stub LLM） | 测量 |
 |---|---|---|---|
 | agent p95 端到端 | <60s | <5s | `xiaopaw_agent_latency_seconds` |
-| LLM p95 | <20s | <0.1s | `xiaopaw_llm_latency_seconds{model="qwen3-max"}` |
+| LLM p95 | <20s | <0.1s | `xiaopaw_llm_latency_seconds{model="deepseek-v4-flash"}` |
 | 100 rk 并发 `/api/test/message` p95 | **<60s** | **<5s** | `scripts/load_test.py --mode <real\|stub>` |
 | 72h 内存增长斜率 | <1MB/h | <1MB/h | canary `container_memory_rss` |
 | Runner 单 rk 串行 200 条消息 | 无丢失，FIFO | 无丢失，FIFO | 集成测试断言 |
@@ -1231,7 +1231,7 @@ if __name__ == "__main__":
     ap.add_argument("--url", default="http://localhost:9090")
     ap.add_argument("--token", required=True)
     ap.add_argument("--mode", choices=["real", "stub"], default="stub",
-                    help="stub: LLM 返回 mock；real: 打真实 Qwen（release canary）")
+                    help="stub: LLM 返回 mock；real: 打真实 DeepSeek（release canary）")
     args = ap.parse_args()
     MODE = args.mode
     asyncio.run(main(args.n, args.url, args.token))
@@ -1421,7 +1421,7 @@ python scripts/verify_metrics.py      # v2.1：8 指标齐全校验
 
 禁止在 v2 测试中出现：
 
-1. **真实外部调用未加 marker**：裸调 Qwen / 飞书 / pgvector 的用例在 CI 上会 flaky。
+1. **真实外部调用未加 marker**：裸调 DeepSeek / 飞书 / pgvector 的用例在 CI 上会 flaky。
 2. **共享可变全局**：`os.chdir` / 修改 `sys.path` / 写仓库内文件。
 3. **`asyncio.create_task` 不 await 也不托管**：测试结束后 task 泄漏到下一个用例。
 4. **`time.sleep` 在 async 测试里**：阻塞事件循环，用 `await asyncio.sleep` 或 `freezegun`。

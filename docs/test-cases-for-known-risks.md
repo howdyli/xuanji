@@ -1009,7 +1009,7 @@ async def test_e2e_p95_latency_within_slo(xiaopaw_app_stub_llm):
     )
 ```
 
-**Fixture 依赖**：`xiaopaw_app_stub_llm`（`StubLLM` 替换真实 Qwen client）
+**Fixture 依赖**：`xiaopaw_app_stub_llm`（`StubLLM` 替换真实 DeepSeek client）
 
 ---
 
@@ -1068,7 +1068,7 @@ async def test_e2e_p95_latency_within_slo(xiaopaw_app_stub_llm):
 |---|---|---|
 | `xiaopaw_http_app` | `AsyncGenerator` | HTTP 模式启动的 XiaoPaw app，含 `post_event` / `runner_queue_snapshot` helper |
 | `xiaopaw_base_url` | `str` | 从 env 读取 `XIAOPAW_HOST:HEALTH_PORT` |
-| `xiaopaw_app_stub_llm` | `AsyncGenerator` | 替换 Qwen client 为 `StubLLM` 的 app 实例 |
+| `xiaopaw_app_stub_llm` | `AsyncGenerator` | 替换 DeepSeek client 为 `StubLLM` 的 app 实例 |
 | `fake_feishu_event` | `Callable` | 工厂函数，参数控制 sign / timestamp |
 | `mock_mcp_sandbox` | `AsyncMock` | stub aio-sandbox HTTP client，返回 `{"result": "ok"}` |
 | `runner_with_fake_fs` | `AsyncGenerator` | Runner 注入 `FakeFS`（内存文件系统）+ `StubLLM` |

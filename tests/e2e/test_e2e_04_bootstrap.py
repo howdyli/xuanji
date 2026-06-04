@@ -28,7 +28,7 @@ RK = "p2p:ou_boot04"
 class TestBootstrapE2E:
     """E2E-04: identity, facts, and knowledge via Bootstrap."""
 
-    async def test_identity_from_soul_md(self, llm_client, qwen_api_key, langfuse_available):
+    async def test_identity_from_soul_md(self, llm_client, deepseek_api_key, langfuse_available):
         result = await send_message(
             llm_client,
             "你是谁？你叫什么名字？介绍一下你自己",
@@ -39,7 +39,7 @@ class TestBootstrapE2E:
         assert llm_assert(
             reply,
             "回复中提到了自己的身份信息（如名字、角色定位），表现出有明确的人设",
-            api_key=qwen_api_key,
+            api_key=deepseek_api_key,
         )
         if langfuse_available:
             await assert_langfuse_trace(result["trace_id"])
@@ -52,7 +52,7 @@ class TestBootstrapE2E:
         if langfuse_available:
             await assert_langfuse_has_generation(result["trace_id"])
 
-    async def test_knowledge_question(self, llm_client, qwen_api_key, langfuse_available):
+    async def test_knowledge_question(self, llm_client, deepseek_api_key, langfuse_available):
         result = await send_message(
             llm_client,
             "用一句话解释什么是 RAG",
@@ -62,7 +62,7 @@ class TestBootstrapE2E:
         assert llm_assert(
             result["reply"],
             "回复提到了检索增强生成或 Retrieval-Augmented Generation",
-            api_key=qwen_api_key,
+            api_key=deepseek_api_key,
         )
         if langfuse_available:
             await assert_langfuse_has_generation(result["trace_id"])

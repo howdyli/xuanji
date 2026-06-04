@@ -8,7 +8,7 @@ from typing import Literal
 
 @dataclass(frozen=True)
 class FeatureFlags:
-    token_counter_mode: Literal["qwen_official", "hf_qwen", "rough"] = "qwen_official"
+    token_counter_mode: Literal["hf_deepseek", "rough"] = "rough"
     enable_skill_timeout: bool = True
     enable_cron_filelock: bool = True
     enable_memory_save_filelock: bool = True

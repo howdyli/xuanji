@@ -10,10 +10,10 @@ feishu:
   allowed_chats: []                  # 允许的群聊 ID（空 = 全部允许）
 
 agent:
-  model: "qwen3-max"
+  model: "deepseek-v4-flash"
   max_iter: 50
   max_input_tokens: 30000
-  sub_agent_model: "qwen3-max"
+  sub_agent_model: "deepseek-v4-flash"
   sub_agent_max_iter: 20
   timeout_s: 300
   llm_timeout_s: 120
@@ -48,6 +48,11 @@ debug:
   test_api_port: 9090
   test_api_token: ""
 
+frontend:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8080
+
 observability:
   metrics_host: "0.0.0.0"
   metrics_port: 8090
@@ -76,6 +81,12 @@ cleanup:
   trace_ttl_days: 30
   raw_ttl_days: 30
   run_hour_utc: 3
+
+skills:
+  # User skills directory (relative paths are resolved against project root)
+  user_dir: "data/user_skills"
+  # Max upload archive size in MB (zip compressed)
+  max_upload_mb: 5
 
 feature_flags:
   token_counter_mode: "rough"

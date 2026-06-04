@@ -12,7 +12,7 @@
 |------|------|
 | 测试状态 | ✅ PASSED |
 | 总耗时 | 185.46s (3分05秒) |
-| LLM-as-Judge | ✅ 通过（Qwen3-max 判定回复与 Python 3.13 相关且含具体信息） |
+| LLM-as-Judge | ✅ 通过（DeepSeek3-max 判定回复与 Python 3.13 相关且含具体信息） |
 | Langfuse Trace | ✅ 21 个 observation 全部记录 |
 | 搜索结果质量 | ✅ 包含 GIL/Nogil、错误消息改进、typing 增强等具体特性 |
 
@@ -29,7 +29,7 @@ routing_key: p2p:ou_search
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │ Layer 2: Main Crew (agent_execution, 179.2s)                 │   │
 │  │                                                              │   │
-│  │  ① llm-call-1 [GENERATION] qwen3-max  (4.6s)               │   │
+│  │  ① llm-call-1 [GENERATION] deepseek-v4-flash  (4.6s)               │   │
 │  │     → 识别意图: 需要搜索能力                                │   │
 │  │     → 决策: 调用 skill_loader(baidu_search)                 │   │
 │  │                                                              │   │
@@ -37,13 +37,13 @@ routing_key: p2p:ou_search
 │  │  │ Layer 3: Sub-Crew via SkillLoaderTool (174.8s)        │   │   │
 │  │  │ skill_name=baidu_search                               │   │   │
 │  │  │                                                       │   │   │
-│  │  │  ② llm-call-2 [GENERATION] qwen3-max  (5.6s)        │   │   │
+│  │  │  ② llm-call-2 [GENERATION] deepseek-v4-flash  (5.6s)        │   │   │
 │  │  │     → 决策: 先创建输出目录                            │   │   │
 │  │  │                                                       │   │   │
 │  │  │  ③ tool: sandbox_execute_bash  (0.8s)                │   │   │
 │  │  │     cmd: mkdir -p /workspace/.../outputs              │   │   │
 │  │  │                                                       │   │   │
-│  │  │  ④ llm-call-3 [GENERATION] qwen3-max  (6.7s)        │   │   │
+│  │  │  ④ llm-call-3 [GENERATION] deepseek-v4-flash  (6.7s)        │   │   │
 │  │  │     → 决策: 执行百度搜索脚本                          │   │   │
 │  │  │                                                       │   │   │
 │  │  │  ⑤ tool: sandbox_execute_bash  (2.9s)                │   │   │
@@ -51,34 +51,34 @@ routing_key: p2p:ou_search
 │  │  │          python search.py --query "Python 3.13 新特性" │   │   │
 │  │  │          --top_k 20                                    │   │   │
 │  │  │                                                       │   │   │
-│  │  │  ⑥ llm-call-4 [GENERATION] qwen3-max  (131.2s) ⚠️   │   │   │
+│  │  │  ⑥ llm-call-4 [GENERATION] deepseek-v4-flash  (131.2s) ⚠️   │   │   │
 │  │  │     → 处理搜索结果（17条）                            │   │   │
 │  │  │     → 决策: 保存 JSON 结果到文件                      │   │   │
 │  │  │                                                       │   │   │
 │  │  │  ⑦ tool: sandbox_file_operations  (0.2s)             │   │   │
 │  │  │     action: write search_result.json                  │   │   │
 │  │  │                                                       │   │   │
-│  │  │  ⑧ llm-call-5 [GENERATION] qwen3-max  (8.2s)        │   │   │
+│  │  │  ⑧ llm-call-5 [GENERATION] deepseek-v4-flash  (8.2s)        │   │   │
 │  │  │     → 决策: 再次搜索并重定向输出                      │   │   │
 │  │  │                                                       │   │   │
 │  │  │  ⑨ tool: sandbox_execute_bash  (2.9s)                │   │   │
 │  │  │     cmd: search.py --query "Python 3.13 新特性"       │   │   │
 │  │  │          --top_k 20 > .../search_result_raw.json      │   │   │
 │  │  │                                                       │   │   │
-│  │  │  ⑩ llm-call-6 [GENERATION] qwen3-max  (6.5s)        │   │   │
+│  │  │  ⑩ llm-call-6 [GENERATION] deepseek-v4-flash  (6.5s)        │   │   │
 │  │  │     → 决策: 读取保存的原始结果                        │   │   │
 │  │  │                                                       │   │   │
 │  │  │  ⑪ tool: sandbox_file_operations  (0.2s)             │   │   │
 │  │  │     action: read search_result_raw.json               │   │   │
 │  │  │                                                       │   │   │
-│  │  │  ⑫ llm-call-7 [GENERATION] qwen3-max  (5.0s)        │   │   │
+│  │  │  ⑫ llm-call-7 [GENERATION] deepseek-v4-flash  (5.0s)        │   │   │
 │  │  │     → 判定: 搜索任务完成                              │   │   │
 │  │  │                                                       │   │   │
 │  │  │  ⑬ tool: final_answer  (0.0s)                        │   │   │
 │  │  │     → Sub-Crew 返回: "搜索任务成功完成"               │   │   │
 │  │  └───────────────────────────────────────────────────────┘   │   │
 │  │                                                              │   │
-│  │  ⑭ llm-call-1 [GENERATION] qwen3-max  (10.7s)              │   │
+│  │  ⑭ llm-call-1 [GENERATION] deepseek-v4-flash  (10.7s)              │   │
 │  │     → 综合 Sub-Crew 搜索结果，生成用户友好回复             │   │
 │  │                                                              │   │
 │  │  ⑮ tool: final_answer  (0.0s)                               │   │
@@ -120,10 +120,10 @@ routing_key: p2p:ou_search
 1. **两层架构工作正常**: Main Crew → SkillLoaderTool → Sub-Crew → Sandbox MCP 全链路打通
 2. **搜索结果准确**: 返回 Python 3.13 的具体特性（Nogil/GIL移除、错误消息改进、typing增强）
 3. **Langfuse 追踪完整**: 21个 observation 覆盖所有事件点，span 层级清晰
-4. **LLM-as-Judge 通过**: Qwen3-max 判定回复满足语义相关性标准
+4. **LLM-as-Judge 通过**: DeepSeek3-max 判定回复满足语义相关性标准
 
 ### ⚠️ 性能瓶颈
-1. **llm-call-4 耗时 131.2s**: 占总耗时 72%。原因是 Sub-Crew 在处理 17 条搜索结果时，Qwen3-max 的输入 token 量大（搜索结果全文）+ 输出 JSON 写入。这是整个流程的主要瓶颈。
+1. **llm-call-4 耗时 131.2s**: 占总耗时 72%。原因是 Sub-Crew 在处理 17 条搜索结果时，DeepSeek3-max 的输入 token 量大（搜索结果全文）+ 输出 JSON 写入。这是整个流程的主要瓶颈。
 2. **Sub-Crew 执行了两次搜索**: 第一次正常搜索后，又执行了一次带重定向的搜索（保存 raw JSON），可能是 Skill 指令中的流程要求，但增加了约 11s 延迟。
 3. **8 次 LLM 调用**: 总 LLM 时间 178.5s，占总耗时 98.6%。工具执行本身极快（sandbox bash < 3s, file ops < 0.2s）。
 

@@ -108,10 +108,10 @@ bot:
 # Agent
 # ──────────────────────────────────────────────────────────
 agent:
-  model: "qwen3-max"
+  model: "deepseek-v4-flash"
   max_iter: 50
   max_input_tokens: 30000
-  sub_agent_model: "qwen3-max"
+  sub_agent_model: "deepseek-v4-flash"
   sub_agent_max_iter: 20
   timeout_s: 300
   llm_timeout_s: 120
@@ -272,10 +272,10 @@ class FeishuConfig(BaseModel):
     allowed_chats: list[str] = Field(default_factory=list)
 
 class AgentConfig(BaseModel):
-    model: str = "qwen3-max"
+    model: str = "deepseek-v4-flash"
     max_iter: int = Field(default=50, ge=1, le=200)
     max_input_tokens: int = Field(default=30000, ge=1000, le=128000)
-    sub_agent_model: str = "qwen3-max"
+    sub_agent_model: str = "deepseek-v4-flash"
     sub_agent_max_iter: int = Field(default=20, ge=1, le=100)
     timeout_s: int = Field(default=300, ge=30, le=3600)
     llm_timeout_s: int = Field(default=120, ge=10, le=600)
@@ -338,10 +338,10 @@ FEISHU_ENCRYPT_KEY=
 FEISHU_VERIFICATION_TOKEN=
 
 # ──────────────────────────────────────────────────────────
-# Qwen
+# DeepSeek
 # ──────────────────────────────────────────────────────────
-QWEN_API_KEY=
-QWEN_DEBUG_PAYLOAD=0        # 1 = 输出完整 LLM payload
+DEEPSEEK_API_KEY=
+DEEPSEEK_DEBUG_PAYLOAD=0        # 1 = 输出完整 LLM payload
 
 # ──────────────────────────────────────────────────────────
 # pgvector
@@ -838,7 +838,7 @@ trap 'rm -f "$TMPENV"' EXIT
   echo "FEISHU_APP_SECRET=$(yq e '.feishu.app_secret' config.yaml)"
   echo "FEISHU_ENCRYPT_KEY=# WS 模式不使用，仅在 HTTP 回调模式下必填"
   echo "FEISHU_VERIFICATION_TOKEN=# 同上"
-  echo "QWEN_API_KEY=$(yq e '.agent.qwen_api_key // \"\"' config.yaml)"
+  echo "DEEPSEEK_API_KEY=$(yq e '.agent.qwen_api_key // \"\"' config.yaml)"
   echo "MEMORY_DB_DSN=请填入强密码版"
   printf 'XIAOPAW_METRICS_TOKEN='; openssl rand -hex 32
   printf 'XIAOPAW_TESTAPI_TOKEN='; openssl rand -hex 32

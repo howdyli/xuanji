@@ -44,7 +44,7 @@ class TestPruningE2E:
     """E2E-09: 15 messages then summarize — verify no context overflow."""
 
     async def test_long_conversation_survives_pruning(
-        self, llm_client_with_dirs, qwen_api_key, langfuse_available
+        self, llm_client_with_dirs, deepseek_api_key, langfuse_available
     ):
         client, dirs = llm_client_with_dirs
 
@@ -61,7 +61,7 @@ class TestPruningE2E:
         assert llm_assert(
             reply,
             "回复是对之前对话的总结，至少提到了编程相关的话题（如 Python、装饰器、GIL 等）",
-            api_key=qwen_api_key,
+            api_key=deepseek_api_key,
         ), f"Summary quality check failed. Reply: {reply[:500]}"
 
         # Verify ctx.json and raw.jsonl persistence (L19)

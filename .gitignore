@@ -25,3 +25,9 @@ feishu.json
 workspace/*/output/
 .venv/
 venv/
+node_modules/
+frontend/node_modules/
+frontend/build/
+*.tsbuildinfo
+*.png
+!frontend/public/*.png

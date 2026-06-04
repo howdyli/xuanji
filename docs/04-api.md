@@ -4,7 +4,7 @@
 > 读者：集成方 / 运维 / 实现工程师。
 > 最后更新：2026-04-19（v2.1）
 >
-> 接口按方向分三类：**入站**（飞书 Webhook / TestAPI）/ **出站**（飞书 REST / Qwen / 百度 / pgvector / Sandbox MCP）/ **运维**（/metrics / /health）。
+> 接口按方向分三类：**入站**（飞书 Webhook / TestAPI）/ **出站**（飞书 REST / DeepSeek / 百度 / pgvector / Sandbox MCP）/ **运维**（/metrics / /health）。
 > 每个接口按：**定位 / Schema / 鉴权 / 错误语义 / v2 加固点** 描述。
 >
 > **v2.1 权威引用**：端口见 [ssot/ports.md](ssot/ports.md)；Feature Flags 见 [ssot/feature-flags.md](ssot/feature-flags.md)；威胁清单见 [ssot/threats.md](ssot/threats.md)；锁清单见 [ssot/locks.md](ssot/locks.md)。
@@ -17,7 +17,7 @@
 2. [飞书 Webhook（入站）](#2-飞书-webhook入站)
 3. [TestAPI（入站）](#3-testapi入站)
 4. [飞书 REST API（出站）](#4-飞书-rest-api出站)
-5. [Qwen DashScope API（出站）](#5-qwen-dashscope-api出站)
+5. [DeepSeek DashScope API（出站）](#5-qwen-dashscope-api出站)
 6. [百度千帆 API（出站）](#6-百度千帆-api出站)
 7. [pgvector PG 协议（出站）](#7-pgvector-pg-协议出站)
 8. [AIO-Sandbox MCP（出站）](#8-aio-sandbox-mcp出站)
@@ -35,7 +35,7 @@
 | TestAPI `POST /api/test/message` | 入 | HTTPS (aiohttp) | Bearer Token + 127.0.0.1 bind（见 [ssot/ports.md](ssot/ports.md) 9090） | 仅 dev | prod 强制禁用 |
 | TestAPI `POST /api/test/clear` | 入 | 同上 | 同上 | 仅 dev | 同上 |
 | 飞书 REST（发消息/读文档/表格/日历） | 出 | HTTPS | tenant_access_token | 所有环境 | 429 识别 + Semaphore(5)（见 [ssot/locks.md#L4](ssot/locks.md)） |
-| Qwen DashScope（chat / embedding） | 出 | HTTPS | Bearer + API Key | 所有环境 | tenacity 重试 + token 计数 |
+| DeepSeek DashScope（chat / embedding） | 出 | HTTPS | Bearer + API Key | 所有环境 | tenacity 重试 + token 计数 |
 | 百度千帆 `web_search` | 出 | HTTPS | API Key | 可选 | tenacity 重试 |
 | pgvector | 出 | PostgreSQL wire | user/password + TLS | 所有环境 | `psycopg2.pool.ThreadedConnectionPool`（v2.1）+ 独立 DB user |
 | AIO-Sandbox MCP | 出 | HTTP (SSE) | 无（内网，见 [ssot/ports.md](ssot/ports.md) 8080） | 所有环境 | **不对宿主暴露端口**（T9） |
@@ -397,16 +397,16 @@ v2 保留 v1 的 Loading UI 模式：
 
 ---
 
-## 5. Qwen DashScope API（出站）
+## 5. DeepSeek DashScope API（出站）
 
 ### 5.1 使用场景
 
 | 场景 | 模型 | 调用位置 |
 |---|---|---|
-| 主 Agent 对话 | `qwen3-max` | `MemoryAwareCrew.run_and_index` |
-| Sub-Crew | `qwen3-max` | `build_skill_crew` |
+| 主 Agent 对话 | `deepseek-v4-flash` | `MemoryAwareCrew.run_and_index` |
+| Sub-Crew | `deepseek-v4-flash` | `build_skill_crew` |
 | 压缩摘要（L19） | `qwen3-turbo` | `context_mgmt._summarize_chunk` |
-| 记忆摘要（L21） | `qwen3-max` | `indexer.extract_summary_and_tags` |
+| 记忆摘要（L21） | `deepseek-v4-flash` | `indexer.extract_summary_and_tags` |
 | Embedding | `text-embedding-v3` dim=1024 | `indexer.embed_texts`, `search_memory.embed_query` |
 
 ### 5.2 适配层：AliyunLLM
@@ -448,10 +448,10 @@ class AliyunLLM(BaseLLM):
 ### 5.3 连接端点
 
 ```
-base_url = https://dashscope.aliyuncs.com/compatible-mode/v1
+base_url = https://api.deepseek.com/v1
 ```
 
-OpenAI 兼容格式；`model` 字段传 `qwen3-max` 等。
+OpenAI 兼容格式；`model` 字段传 `deepseek-v4-flash` 等。
 
 ### 5.4 超时 & 重试
 
@@ -472,7 +472,7 @@ OpenAI 兼容格式；`model` 字段传 `qwen3-max` 等。
 
 通过 `xiaopaw_llm_calls_total{model, status}` metric 计费：
 
-- 查询 `sum(rate(xiaopaw_llm_calls_total{model="qwen3-max"}[1d])) * 86400` 获得日调用次数
+- 查询 `sum(rate(xiaopaw_llm_calls_total{model="deepseek-v4-flash"}[1d])) * 86400` 获得日调用次数
 - 乘以单价（公开）得成本
 - 月度成本超预算时告警
 

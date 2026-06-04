@@ -306,7 +306,7 @@ def _read_tail(self, path, n):
 
 ### 5.2 ctx.json 格式
 
-结构：**OpenAI/Qwen messages 数组**（与 LLM 调用直接互通）。
+结构：**OpenAI/DeepSeek messages 数组**（与 LLM 调用直接互通）。
 
 ```json
 [
@@ -816,7 +816,7 @@ CREATE TABLE IF NOT EXISTS memories (
     user_message    TEXT        NOT NULL,
     assistant_reply TEXT        NOT NULL,
 
-    summary         TEXT        NOT NULL,              -- qwen3-max 提取的一句话摘要
+    summary         TEXT        NOT NULL,              -- deepseek-v4-flash 提取的一句话摘要
     tags            TEXT[]      NOT NULL DEFAULT '{}',
 
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1203,7 +1203,7 @@ def _get_tokenizer():
         except Exception:
             try:
                 from transformers import AutoTokenizer
-                _tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-7B-Instruct")
+                _tokenizer = AutoTokenizer.from_pretrained("DeepSeek/DeepSeek2-7B-Instruct")
             except Exception:
                 _tokenizer = "rough"
     return _tokenizer

@@ -175,7 +175,7 @@ services:
     # 由 xiaopaw 容器以 `http://aio-sandbox:8080/mcp` 访问；不对宿主暴露任何端口。
     environment:
       # 凭证经 env 注入沙盒内部，不经过 LLM
-      QWEN_API_KEY_FILE: /run/secrets/qwen_api_key
+      DEEPSEEK_API_KEY_FILE: /run/secrets/qwen_api_key
       MEMORY_DB_DSN_FILE: /run/secrets/memory_db_dsn
       SANDBOX_LOG_LEVEL: "INFO"
     secrets:
@@ -609,7 +609,7 @@ docs/
 | `XIAOPAW_PG_DSN` | L2 | `postgresql://xiaopaw_app:***@pgvector:5432/xiaopaw_db` | 应用连接串（最小权限，见 [07-security.md §13](./07-security.md)） |
 | `XIAOPAW_METRICS_TOKEN` | L2 | ≥32 字符 base64 | `/metrics` Bearer |
 | `XIAOPAW_TESTAPI_TOKEN` | L2 | ≥32 字符 base64 | TestAPI Bearer（prod 不用） |
-| `QWEN_API_KEY` | L2 | `sk-...` | 沙盒内注入，不经过 LLM |
+| `DEEPSEEK_API_KEY` | L2 | `sk-...` | 沙盒内注入，不经过 LLM |
 | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | **L2**（v2.1） | — | 飞书凭证；**v2.1 从 env_file 统一迁到 docker secrets**，entrypoint.sh 从 `/run/secrets/feishu_*` 读 |
 | `FEISHU_VERIFICATION_TOKEN` / `FEISHU_ENCRYPT_KEY` | L2 | — | **备用字段**：WS 模式 SDK 不消费（见 [sdk-verification-report.md §1](./sdk-verification-report.md)）；仅启用 HTTP 回调路径时生效 |
 
@@ -637,7 +637,7 @@ SANDBOX_TAG=
 # XIAOPAW_PG_DSN=
 # XIAOPAW_METRICS_TOKEN=
 # XIAOPAW_TESTAPI_TOKEN=
-# QWEN_API_KEY=
+# DEEPSEEK_API_KEY=
 # FEISHU_APP_ID=           # v2.1：迁移到 docker/secrets/feishu_app_id.txt
 # FEISHU_APP_SECRET=       # v2.1：迁移到 docker/secrets/feishu_app_secret.txt
 # FEISHU_VERIFICATION_TOKEN=  # 仅 HTTP 回调路径使用（WS 模式不消费）
@@ -849,7 +849,7 @@ Phase 0 是 v1 → v2 切换前的**强制就绪清单**。未全部打勾，不
 - [ ] 飞书 `FEISHU_APP_SECRET` 已轮换（v1 明文历史存在泄露嫌疑 → 新密钥）
 - [ ] `FEISHU_VERIFICATION_TOKEN` 已轮换
 - [ ] `FEISHU_ENCRYPT_KEY` 已轮换
-- [ ] DashScope `QWEN_API_KEY` 已轮换
+- [ ] DashScope `DEEPSEEK_API_KEY` 已轮换
 - [ ] pgvector root 密码已轮换；`xiaopaw_app` 独立账号已创建（最小权限）
 - [ ] `XIAOPAW_METRICS_TOKEN` / `XIAOPAW_TESTAPI_TOKEN` 重新生成（≥32 字符 base64）
 - [ ] 所有旧凭证已在飞书开放平台 / DashScope / PG 吊销
@@ -866,7 +866,7 @@ Phase 0 是 v1 → v2 切换前的**强制就绪清单**。未全部打勾，不
 
 ### 8.3 Tokenizer 校准报告
 
-- [ ] `scripts/tokenizer_calibration.py` 针对 Qwen3 跑通 1000 条真实对话样本
+- [ ] `scripts/tokenizer_calibration.py` 针对 DeepSeek3 跑通 1000 条真实对话样本
 - [ ] 输出报告 `docs/reports/tokenizer-calibration-YYYY-MM-DD.md`
 - [ ] `feature_flags.token_counter_mode = "qwen_official"` 的误差率 < 1.5%
 - [ ] 异常长样本（>8k token）的对比曲线已归档
@@ -1171,7 +1171,7 @@ sed -i "s|^XIAOPAW_DIGEST=.*|XIAOPAW_DIGEST=${DIGEST}|" .env.prod
 | 流量方向 | 估算 | 说明 |
 |---------|------|------|
 | 飞书出站 | 200 KB/s 峰值 | WebSocket + 文件上传 |
-| DashScope 出站 | 500 KB/s 峰值 | Qwen chat + embedding |
+| DashScope 出站 | 500 KB/s 峰值 | DeepSeek chat + embedding |
 | Prometheus 入站 | 50 KB/15s | /metrics scrape |
 | 内网 xiaopaw ↔ pgvector | 1 MB/s 峰值 | embedding 查询 |
 

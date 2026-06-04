@@ -1,0 +1,314 @@
+@import "tailwindcss";
+
+/* highlight.js — GitHub-style theme for code blocks */
+@import "highlight.js/styles/github-dark.css";
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* Thinking animation */
+@keyframes bounce {
+  0%, 80%, 100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(-4px);
+  }
+}
+
+.animate-bounce {
+  animation: bounce 1.4s infinite ease-in-out;
+}
+
+/* ── Markdown content typography ──────────────────────────────────── */
+
+.md-content {
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+.md-content > *:first-child {
+  margin-top: 0;
+}
+
+.md-content > *:last-child {
+  margin-bottom: 0;
+}
+
+.md-content pre code {
+  font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Menlo', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+.md-content img {
+  max-width: 100%;
+  border-radius: 8px;
+  margin: 8px 0;
+}
+
+.md-content table {
+  font-size: 13px;
+}
+
+.md-content table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Nested list spacing */
+.md-content li > ul,
+.md-content li > ol {
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   THEME SYSTEM — CSS custom properties
+   ══════════════════════════════════════════════════════════════════ */
+
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #fafafa;
+  --bg-tertiary: #f3f4f6;
+  --bg-input: #ffffff;
+  --bg-bubble-user: #111827;
+  --bg-bubble-assistant: #ffffff;
+  --bg-hover: rgba(0,0,0,0.04);
+  --text-primary: #1f2937;
+  --text-secondary: #4b5563;
+  --text-tertiary: #9ca3af;
+  --text-bubble-user: #ffffff;
+  --text-bubble-assistant: #1f2937;
+  --border-primary: #e5e7eb;
+  --border-secondary: rgba(229,231,235,0.8);
+  --accent: #10b981;
+  --accent-light: #d1fae5;
+  --accent-text: #065f46;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+  --md-font-size: 13.5px;
+}
+
+/* ── Dark mode ───────────────────────────────────────────────────── */
+
+html.dark {
+  --bg-primary: #1a1a2e;
+  --bg-secondary: #16162a;
+  --bg-tertiary: #232340;
+  --bg-input: #232340;
+  --bg-bubble-user: #3b3b6b;
+  --bg-bubble-assistant: #232340;
+  --bg-hover: rgba(255,255,255,0.06);
+  --text-primary: #e2e8f0;
+  --text-secondary: #a0aec0;
+  --text-tertiary: #718096;
+  --text-bubble-user: #ffffff;
+  --text-bubble-assistant: #e2e8f0;
+  --border-primary: #2d2d50;
+  --border-secondary: rgba(45,45,80,0.8);
+  --accent: #68d391;
+  --accent-light: rgba(104,211,145,0.15);
+  --accent-text: #68d391;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+/* ── 云朵舞者 (Cloud Dancer) ─ warm cream/beige ──────────────────── */
+
+html.theme-cloud-dancer {
+  --bg-primary: #faf6f0;
+  --bg-secondary: #f5efe5;
+  --bg-tertiary: #ece4d6;
+  --bg-input: #ffffff;
+  --bg-bubble-user: #6b5b4e;
+  --bg-bubble-assistant: #ffffff;
+  --bg-hover: rgba(139,115,85,0.06);
+  --text-primary: #4a3f35;
+  --text-secondary: #7a6d60;
+  --text-tertiary: #a89888;
+  --text-bubble-user: #ffffff;
+  --text-bubble-assistant: #4a3f35;
+  --border-primary: #e0d5c5;
+  --border-secondary: rgba(224,213,197,0.8);
+  --accent: #c4a882;
+  --accent-light: #f0e6d6;
+  --accent-text: #8a7050;
+}
+
+/* ── 晴空碧海 (Clear Sky) ─ ocean blue ────────────────────────────── */
+
+html.theme-clear-sky {
+  --bg-primary: #f0f7fc;
+  --bg-secondary: #e4f0f8;
+  --bg-tertiary: #d0e4f2;
+  --bg-input: #ffffff;
+  --bg-bubble-user: #2d6fa0;
+  --bg-bubble-assistant: #ffffff;
+  --bg-hover: rgba(74,156,199,0.06);
+  --text-primary: #1a3a5c;
+  --text-secondary: #4a7a9e;
+  --text-tertiary: #7aabc8;
+  --text-bubble-user: #ffffff;
+  --text-bubble-assistant: #1a3a5c;
+  --border-primary: #bdd8ec;
+  --border-secondary: rgba(189,216,236,0.8);
+  --accent: #4a9cc7;
+  --accent-light: #d6eef8;
+  --accent-text: #2d6fa0;
+}
+
+/* ── 森息晨光 (Forest Morning) ─ green nature ────────────────────── */
+
+html.theme-forest-morning {
+  --bg-primary: #f2f8f0;
+  --bg-secondary: #e6f2e4;
+  --bg-tertiary: #d4ead0;
+  --bg-input: #ffffff;
+  --bg-bubble-user: #3a6e38;
+  --bg-bubble-assistant: #ffffff;
+  --bg-hover: rgba(90,158,88,0.06);
+  --text-primary: #2a4a28;
+  --text-secondary: #5a7e58;
+  --text-tertiary: #88ab86;
+  --text-bubble-user: #ffffff;
+  --text-bubble-assistant: #2a4a28;
+  --border-primary: #b8d8b4;
+  --border-secondary: rgba(184,216,180,0.8);
+  --accent: #5a9e58;
+  --accent-light: #d8f0d4;
+  --accent-text: #3a6e38;
+}
+
+/* ── 苍穹暮色 (Sky Twilight) ─ deep night blue ──────────────────── */
+
+html.theme-sky-twilight {
+  --bg-primary: #1a1a3e;
+  --bg-secondary: #161635;
+  --bg-tertiary: #24244a;
+  --bg-input: #24244a;
+  --bg-bubble-user: #3f3d6e;
+  --bg-bubble-assistant: #24244a;
+  --bg-hover: rgba(107,104,176,0.1);
+  --text-primary: #d8d8f0;
+  --text-secondary: #a0a0cc;
+  --text-tertiary: #6b68a0;
+  --text-bubble-user: #ffffff;
+  --text-bubble-assistant: #d8d8f0;
+  --border-primary: #2d2d55;
+  --border-secondary: rgba(45,45,85,0.8);
+  --accent: #8b88cc;
+  --accent-light: rgba(139,136,204,0.15);
+  --accent-text: #a8a5e0;
+}
+
+/* ── 森息夜语 (Forest Night) ─ dark green forest ─────────────────── */
+
+html.theme-forest-night {
+  --bg-primary: #141e14;
+  --bg-secondary: #101a10;
+  --bg-tertiary: #1e2e1e;
+  --bg-input: #1e2e1e;
+  --bg-bubble-user: #2d4a2d;
+  --bg-bubble-assistant: #1e2e1e;
+  --bg-hover: rgba(74,122,74,0.1);
+  --text-primary: #c8dcc8;
+  --text-secondary: #8aaa8a;
+  --text-tertiary: #5a7a5a;
+  --text-bubble-user: #e0f0e0;
+  --text-bubble-assistant: #c8dcc8;
+  --border-primary: #2a3e2a;
+  --border-secondary: rgba(42,62,42,0.8);
+  --accent: #5a9e5a;
+  --accent-light: rgba(90,158,90,0.15);
+  --accent-text: #7ac07a;
+}
+
+/* ── 莫兰迪夜 (Morandi Night) ─ warm dark gray ───────────────────── */
+
+html.theme-morandi-night {
+  --bg-primary: #2e2a2a;
+  --bg-secondary: #282424;
+  --bg-tertiary: #3a3636;
+  --bg-input: #3a3636;
+  --bg-bubble-user: #5a5252;
+  --bg-bubble-assistant: #3a3636;
+  --bg-hover: rgba(138,126,126,0.1);
+  --text-primary: #d8d0cc;
+  --text-secondary: #a89e98;
+  --text-tertiary: #7a706a;
+  --text-bubble-user: #f0e8e4;
+  --text-bubble-assistant: #d8d0cc;
+  --border-primary: #4a4444;
+  --border-secondary: rgba(74,68,68,0.8);
+  --accent: #b0a090;
+  --accent-light: rgba(176,160,144,0.15);
+  --accent-text: #c8b8a8;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   THEME-AWARE UTILITY CLASSES
+   ══════════════════════════════════════════════════════════════════ */
+
+.t-bg-primary   { background-color: var(--bg-primary); }
+.t-bg-secondary { background-color: var(--bg-secondary); }
+.t-bg-tertiary  { background-color: var(--bg-tertiary); }
+.t-bg-input     { background-color: var(--bg-input); }
+.t-bg-hover     { background-color: var(--bg-hover); }
+.t-text-primary   { color: var(--text-primary); }
+.t-text-secondary { color: var(--text-secondary); }
+.t-text-tertiary  { color: var(--text-tertiary); }
+.t-border-primary   { border-color: var(--border-primary); }
+.t-border-secondary { border-color: var(--border-secondary); }
+
+/* Markdown font size variable */
+.md-content {
+  font-size: var(--md-font-size, 13.5px);
+}
+
+/* Form input shared style */
+.form-input {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 14px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  outline: none;
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.form-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.1);
+}
+.form-input::placeholder {
+  color: var(--text-tertiary);
+}

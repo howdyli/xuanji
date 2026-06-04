@@ -134,12 +134,12 @@ class TestLLMConversation:
     """E2E-A-001~004: real Qwen LLM with Langfuse trace checks."""
 
     @pytest.mark.llm_dependent
-    async def test_greeting_with_langfuse(self, llm_client, qwen_api_key, langfuse_available):
+    async def test_greeting_with_langfuse(self, llm_client, deepseek_api_key, langfuse_available):
         """E2E-A-001: greeting produces reply + Langfuse trace."""
         result = await send_message(llm_client, "你好", timeout=300.0)
         reply = result["reply"]
         assert reply and len(reply) > 0
-        assert llm_assert(reply, "回复是友好的问候或自我介绍", api_key=qwen_api_key)
+        assert llm_assert(reply, "回复是友好的问候或自我介绍", api_key=deepseek_api_key)
 
         if langfuse_available:
             trace = await assert_langfuse_trace(result["trace_id"])
@@ -157,13 +157,13 @@ class TestLLMConversation:
             await assert_langfuse_has_generation(result["trace_id"])
 
     @pytest.mark.llm_dependent
-    async def test_knowledge_question(self, llm_client, qwen_api_key, langfuse_available):
+    async def test_knowledge_question(self, llm_client, deepseek_api_key, langfuse_available):
         """E2E-A-003: knowledge question with Langfuse trace."""
         result = await send_message(llm_client, "用一句话解释什么是RAG", timeout=300.0)
         assert llm_assert(
             result["reply"],
             "回复提到了检索增强生成或Retrieval-Augmented Generation的含义",
-            api_key=qwen_api_key,
+            api_key=deepseek_api_key,
         )
 
         if langfuse_available:
@@ -186,13 +186,13 @@ class TestMultiTurnWithLangfuse:
             await assert_langfuse_trace_quality(r2["trace_id"])
 
     @pytest.mark.llm_dependent
-    async def test_new_session_clears_context(self, llm_client, qwen_api_key, langfuse_available):
+    async def test_new_session_clears_context(self, llm_client, deepseek_api_key, langfuse_available):
         """E2E-A-013: /new clears context, each stage has Langfuse trace."""
         rk = "p2p:ou_clear_lf"
         r1 = await send_message(llm_client, "记住密码是ABC123", routing_key=rk, timeout=300.0)
         await send_message(llm_client, "/new", routing_key=rk)
         r3 = await send_message(llm_client, "密码是什么？", routing_key=rk, timeout=300.0)
-        assert llm_assert(r3["reply"], "回复表示不知道密码", api_key=qwen_api_key)
+        assert llm_assert(r3["reply"], "回复表示不知道密码", api_key=deepseek_api_key)
 
         if langfuse_available:
             await assert_langfuse_trace_quality(r1["trace_id"])

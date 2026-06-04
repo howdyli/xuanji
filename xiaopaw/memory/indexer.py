@@ -16,8 +16,8 @@ def _get_llm_client():
         from openai import OpenAI
         import os
         return OpenAI(
-            api_key=os.environ.get("QWEN_API_KEY", ""),
-            base_url=os.environ.get("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            api_key=os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("QWEN_API_KEY", ""),
+            base_url=os.environ.get("DEEPSEEK_BASE_URL") or os.environ.get("QWEN_BASE_URL", "https://api.deepseek.com/v1"),
         )
     except ImportError:
         logger.warning("openai package not installed, indexing disabled")
@@ -49,7 +49,7 @@ async def async_index_turn(
         content_id = _content_hash(session_id, turn_ts)
 
         summary_resp = client.chat.completions.create(
-            model="qwen-turbo",
+            model="deepseek-chat",
             messages=[
                 {"role": "system", "content": "用一句中文总结以下对话的核心内容，提取关键实体和主题标签。"},
                 {"role": "user", "content": f"用户：{user_message}\n助手：{assistant_reply[:500]}"},

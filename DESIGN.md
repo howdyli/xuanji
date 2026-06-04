@@ -1,6 +1,6 @@
-# XiaoPaw v2 详细设计文档（总纲）
+# 玄机 详细设计文档（总纲）
 
-- **项目**：XiaoPaw v2（小爪子 v2）— 飞书本地工作助手（生产加固版）
+- **项目**：玄机 — 飞书本地工作助手（生产加固版）
 - **版本**：**v3**（2026-04-24 系统加固）/ v2.1（2026-04-19 升级）
 - **原始日期**：2026-04-17（v2.0-draft）
 - **前身**：`/root/course/code/xiaopaw-with-memory/`（第 22 课教学示例）
@@ -130,7 +130,7 @@
 
 ### 1.1 定位
 
-**XiaoPaw v2**（小爪子 v2）是第 22 课教学示例的生产加固版本：
+**玄机**（原 XiaoPaw v2）是第 22 课教学示例的生产加固版本：
 - **保留**：飞书本地助手（WebSocket 长连接、无需公网 IP、Skills 生态、AIO-Sandbox 执行隔离）
 - **保留**：三层记忆架构（L19 上下文 / L20 文件 / L21 搜索）
 - **加固**：并发安全、容错降级、可观测、安全合规、测试覆盖
@@ -158,7 +158,7 @@
 ### 1.3 部署形态
 
 ```
-[用户/运维]          [XiaoPaw v2 主进程]             [外部依赖]
+[用户/运维]          [玄机 主进程]             [外部依赖]
    │                        │                           │
    │   飞书 WebSocket (长连) │                           │
    ├──────────────────────▶ │                           │
@@ -236,7 +236,7 @@ v2 明确**不做**的事，避免范围蠕变：
 
 ### 2.2 系统边界
 
-XiaoPaw v2 **包含**：
+玄机 **包含**：
 - 主进程（FeishuListener + Runner + Agent + CronService + CleanupService + TestAPI + metrics）
 - pgvector 数据库（作为依赖组件，生产独立部署）
 - AIO-Sandbox 容器（作为依赖组件，独立部署）
@@ -625,7 +625,7 @@ xiaopaw_cron_dlq_total                               # Cron 死信
 - **Prod**：单节点，`XIAOPAW_ENV=prod` 触发 `assert_production_safe`，TestAPI 强制关，`/metrics` Bearer Token 必填
 
 **健康检查**：
-- XiaoPaw 主服务：`GET /health` → 200 + git sha
+- 玄机 主服务：`GET /health` → 200 + git sha
 - pgvector：内置 compose healthcheck
 - AIO-Sandbox：`GET /healthz`（compose 内置）
 

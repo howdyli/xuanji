@@ -6,7 +6,7 @@
   DEMO-03  Prompt 注入攻击 → "安全策略拦截"，不泄露敏感信息
   DEMO-04  攻击后系统恢复 → 同一 routing_key，deny 后正常回复
 
-Tier: T4（真实 LLM + Langfuse），需要 QWEN_API_KEY + Langfuse 可达。
+Tier: T4（真实 LLM + Langfuse），需要 DEEPSEEK_API_KEY + Langfuse 可达。
 """
 
 from __future__ import annotations

@@ -15,23 +15,14 @@ _mode = "rough"
 @lru_cache(maxsize=1)
 def _init_tokenizer() -> str:
     global _tokenizer, _mode
-    try:
-        import dashscope  # noqa: F401
-        from dashscope import get_tokenizer
-        _tokenizer = get_tokenizer("qwen-max")
-        _mode = "qwen_official"
-        logger.info("token_counter: using qwen_official tokenizer")
-        return _mode
-    except Exception:
-        pass
-
+    # DeepSeek uses similar tokenizer to Qwen, fallback to rough estimation
     try:
         from transformers import AutoTokenizer
         _tokenizer = AutoTokenizer.from_pretrained(
-            "Qwen/Qwen2-7B-Instruct", local_files_only=True
+            "deepseek-ai/deepseek-llm-7b-base", local_files_only=True
         )
-        _mode = "hf_qwen"
-        logger.info("token_counter: using hf_qwen tokenizer")
+        _mode = "hf_deepseek"
+        logger.info("token_counter: using hf_deepseek tokenizer")
         return _mode
     except Exception:
         pass

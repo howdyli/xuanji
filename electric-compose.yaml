@@ -1,0 +1,65 @@
+# ElectricSQL sync service for XiaoPaw v2 Frontend
+#
+# ElectricSQL provides local-first sync between PostgreSQL and browser PGlite.
+# It uses Postgres logical replication to detect changes and push them
+# to connected clients over WebSocket.
+#
+# Usage:
+#   docker compose -f electric-compose.yaml up -d
+#
+# Prerequisites:
+#   - Docker installed
+#   - PostgreSQL running (this compose includes one, or use your own)
+#
+# After startup:
+#   - ElectricSQL sync endpoint: http://localhost:5133
+#   - PostgreSQL: localhost:5432
+#
+# Frontend connection:
+#   The React frontend connects to ElectricSQL via WebSocket at ws://localhost:5133
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: xiaopaw
+      POSTGRES_USER: xiaopaw
+      POSTGRES_PASSWORD: xiaopaw
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_wal_senders=10
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xiaopaw -d xiaopaw"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  electric:
+    image: electricsql/electric:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://xiaopaw:xiaopaw@postgres:5432/xiaopaw?sslmode=disable
+      # Dev mode: skip secret requirement
+      ELECTRIC_INSECURE: "true"
+      # Persist shape cache
+      ELECTRIC_STORAGE_DIR: /var/lib/electric
+    ports:
+      - "5133:3000"
+    volumes:
+      - electric_data:/var/lib/electric
+
+volumes:
+  pg_data:
+  electric_data:

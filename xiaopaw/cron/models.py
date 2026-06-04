@@ -7,10 +7,18 @@ from pydantic import BaseModel, Field
 
 class CronJob(BaseModel, extra="forbid"):
     id: str
-    routing_key: str
+    routing_key: str = "p2p:web_user"
     cron_expr: str
     content: str
     enabled: bool = True
     description: str = ""
     fail_count: int = Field(default=0, ge=0)
     max_retries: int = Field(default=3, ge=0)
+    # --- automation extensions ---
+    name: str = ""
+    action_type: str = "dispatch"  # "dispatch" | "skill"
+    skill_name: str = ""
+    last_run_at: str = ""
+    last_status: str = ""
+    created_at: str = ""
+    updated_at: str = ""

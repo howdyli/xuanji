@@ -133,6 +133,8 @@ class MemoryAwareCrew:
         max_history_turns: int = _DEFAULT_MAX_HISTORY_TURNS,
         sandbox_url: str = "",
         flags: FeatureFlags | None = None,
+        skill_registry: Any | None = None,
+        user_skills_dir: Path | None = None,
         verbose: bool = False,
     ) -> None:
         self.session_id = session_id
@@ -146,6 +148,8 @@ class MemoryAwareCrew:
         self._max_history_turns = max_history_turns
         self._sandbox_url = sandbox_url
         self._flags = flags or FeatureFlags()
+        self._skill_registry = skill_registry
+        self._user_skills_dir = user_skills_dir
         self._verbose = verbose
 
         self._step_callback = _make_step_callback(sender, routing_key)
@@ -167,17 +171,28 @@ class MemoryAwareCrew:
 
         from xiaopaw.tools.skill_loader import SkillLoaderTool
 
+        # Resolve per-session enabled-skills subset from registry (DB-backed)
+        enabled_skills: set | None = None
+        if self._skill_registry is not None:
+            try:
+                enabled_skills = self._skill_registry.get_session_skills(self.session_id)
+            except Exception as exc:
+                logger.warning("main_crew: get_session_skills failed: %s", exc)
+                enabled_skills = None
+
         skill_tool = SkillLoaderTool(
             session_id=self.session_id,
             sandbox_url=self._sandbox_url,
             routing_key=self.routing_key,
             history_all=self._history_all,
+            enabled_skills=enabled_skills,
+            user_skills_dir=self._user_skills_dir,
         )
 
         return Agent(
             **cfg,
             tools=[skill_tool, IntermediateTool()],
-            llm=AliyunLLM(model="qwen3-max", region="cn", temperature=0.3),
+            llm=AliyunLLM(model="deepseek-chat", region="deepseek", temperature=0.3),
             verbose=self._verbose,
         )
 
@@ -318,6 +333,8 @@ def build_agent_fn(
     max_history_turns: int = _DEFAULT_MAX_HISTORY_TURNS,
     sandbox_url: str = "",
     flags: FeatureFlags | None = None,
+    skill_registry: Any | None = None,
+    user_skills_dir: Path | None = None,
 ) -> AgentFn:
     ctx_dir.mkdir(parents=True, exist_ok=True)
 
@@ -340,6 +357,8 @@ def build_agent_fn(
             max_history_turns=max_history_turns,
             sandbox_url=sandbox_url,
             flags=flags,
+            skill_registry=skill_registry,
+            user_skills_dir=user_skills_dir,
             verbose=verbose,
         )
         return await crew_instance.run_and_index()

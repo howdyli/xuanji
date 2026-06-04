@@ -77,15 +77,15 @@ async def send_message(
 
 def llm_assert(reply: str, criteria: str, *, api_key: str = "") -> bool:
     """LLM-as-Judge: check if reply semantically satisfies criteria."""
-    key = api_key or os.environ.get("QWEN_API_KEY", "")
+    key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
     if not key:
         return bool(reply and reply.strip())
 
     resp = requests.post(
-        "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "https://api.deepseek.com/v1/chat/completions",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         json={
-            "model": "qwen3-max",
+            "model": "deepseek-chat",
             "messages": [
                 {
                     "role": "system",
@@ -208,8 +208,8 @@ async def assert_langfuse_has_generation(trace_id: str) -> dict:
 
 
 @pytest.fixture(scope="session")
-def qwen_api_key() -> str:
-    return os.environ.get("QWEN_API_KEY", "") or os.environ.get("DASHSCOPE_API_KEY", "")
+def deepseek_api_key() -> str:
+    return os.environ.get("DEEPSEEK_API_KEY", "") or os.environ.get("DASHSCOPE_API_KEY", "")
 
 
 @pytest.fixture(scope="session")
@@ -281,7 +281,7 @@ def _clean_sandbox_workspace(workspace_dir: Path) -> None:
 
 
 async def _build_llm_client(
-    tmp_path, qwen_api_key: str, sandbox_url: str = "", workspace_dir: Path | None = None,
+    tmp_path, deepseek_api_key: str, sandbox_url: str = "", workspace_dir: Path | None = None,
 ):
     """Shared builder for LLM test clients."""
     data_dir = tmp_path / "data"
@@ -332,11 +332,11 @@ async def _safe_teardown(runner, client, timeout: float = 15.0) -> None:
 
 
 @pytest_asyncio.fixture
-async def llm_client(tmp_path, qwen_api_key, sandbox_url):
+async def llm_client(tmp_path, deepseek_api_key, sandbox_url):
     """Real Qwen LLM + real Sandbox (MCP) + Hook framework + Langfuse tracing."""
-    if not qwen_api_key:
-        pytest.skip("QWEN_API_KEY not set")
-    client, runner = await _build_llm_client(tmp_path, qwen_api_key, sandbox_url=sandbox_url)
+    if not deepseek_api_key:
+        pytest.skip("DEEPSEEK_API_KEY not set")
+    client, runner = await _build_llm_client(tmp_path, deepseek_api_key, sandbox_url=sandbox_url)
     yield client
     await _safe_teardown(runner, client)
 
@@ -353,14 +353,14 @@ def sandbox_workspace_dir() -> Path:
 
 
 @pytest_asyncio.fixture
-async def sandbox_client(tmp_path, qwen_api_key, sandbox_url):
+async def sandbox_client(tmp_path, deepseek_api_key, sandbox_url):
     """Real Qwen LLM + Sandbox (MCP) for skill execution tests.
 
     Uses the sandbox-mounted workspace directory so that memory-save writes
     inside the sandbox are visible to Bootstrap on the host.
     """
-    if not qwen_api_key:
-        pytest.skip("QWEN_API_KEY not set")
+    if not deepseek_api_key:
+        pytest.skip("DEEPSEEK_API_KEY not set")
     base = sandbox_url.rsplit("/mcp", 1)[0] if "/mcp" in sandbox_url else sandbox_url
     try:
         resp = requests.get(base, timeout=3)
@@ -371,7 +371,7 @@ async def sandbox_client(tmp_path, qwen_api_key, sandbox_url):
     workspace_dir = _SANDBOX_WORKSPACE
     _clean_sandbox_workspace(workspace_dir)
     client, runner = await _build_llm_client(
-        tmp_path, qwen_api_key, sandbox_url=sandbox_url, workspace_dir=workspace_dir,
+        tmp_path, deepseek_api_key, sandbox_url=sandbox_url, workspace_dir=workspace_dir,
     )
     yield client
     await _safe_teardown(runner, client)
@@ -379,11 +379,11 @@ async def sandbox_client(tmp_path, qwen_api_key, sandbox_url):
 
 
 @pytest_asyncio.fixture
-async def llm_client_with_dirs(tmp_path, qwen_api_key):
+async def llm_client_with_dirs(tmp_path, deepseek_api_key):
     """Real Qwen LLM + exposes data/ctx/workspace paths for file verification."""
-    if not qwen_api_key:
-        pytest.skip("QWEN_API_KEY not set")
-    client, runner = await _build_llm_client(tmp_path, qwen_api_key)
+    if not deepseek_api_key:
+        pytest.skip("DEEPSEEK_API_KEY not set")
+    client, runner = await _build_llm_client(tmp_path, deepseek_api_key)
     dirs = {
         "data_dir": tmp_path / "data",
         "ctx_dir": tmp_path / "data" / "ctx",
@@ -394,30 +394,30 @@ async def llm_client_with_dirs(tmp_path, qwen_api_key):
 
 
 @pytest_asyncio.fixture
-async def audit_llm_client(tmp_path, qwen_api_key, monkeypatch):
+async def audit_llm_client(tmp_path, deepseek_api_key, monkeypatch):
     """Real Qwen LLM + Sandbox MCP + audit log file for security audit verification.
 
     Sandbox MCP is mandatory: agent may decide to call search skills (e.g. baidu_search)
     for follow-up questions. Without a valid sandbox URL the Sub-Crew constructs
     MCPServerHTTP("") → httpx.UnsupportedProtocol → asyncgen leaks → TestAPI hangs.
     """
-    if not qwen_api_key:
-        pytest.skip("QWEN_API_KEY not set")
+    if not deepseek_api_key:
+        pytest.skip("DEEPSEEK_API_KEY not set")
     audit_file = tmp_path / "security_audit.jsonl"
     monkeypatch.setenv("SECURITY_AUDIT_FILE", str(audit_file))
     client, runner = await _build_llm_client(
-        tmp_path, qwen_api_key, sandbox_url=_SANDBOX_URL,
+        tmp_path, deepseek_api_key, sandbox_url=_SANDBOX_URL,
     )
     yield client, audit_file, runner
     await _safe_teardown(runner, client)
 
 
 @pytest_asyncio.fixture
-async def budget_llm_client(tmp_path, qwen_api_key, monkeypatch):
+async def budget_llm_client(tmp_path, deepseek_api_key, monkeypatch):
     """Real Qwen LLM + extremely low budget for cost guard testing."""
-    if not qwen_api_key:
-        pytest.skip("QWEN_API_KEY not set")
+    if not deepseek_api_key:
+        pytest.skip("DEEPSEEK_API_KEY not set")
     monkeypatch.setenv("COST_GUARD_BUDGET", "0")
-    client, runner = await _build_llm_client(tmp_path, qwen_api_key)
+    client, runner = await _build_llm_client(tmp_path, deepseek_api_key)
     yield client
     await _safe_teardown(runner, client)

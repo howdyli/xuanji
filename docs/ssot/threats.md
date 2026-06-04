@@ -113,7 +113,7 @@ Trusted 存储：pgvector / files / .config
 | 法规 | 要求 | 对应防御 |
 |---|---|---|
 | **PIPL**（中国个人信息保护法） | 数据主体权利（访问 / 导出 / 删除） | `export_user_data.py` / `delete_user_data.py`（PIPL 接口实现） |
-| **PIPL** 第 38 条 | 跨境传输告知 / 评估 | README 数据本地化披露（Qwen / 百度外发） |
+| **PIPL** 第 38 条 | 跨境传输告知 / 评估 | README 数据本地化披露（DeepSeek / 百度外发） |
 | **PIPL** 第 44 条 | 去标识化 / 匿名化 | `mask_pii`（手机 / 邮箱 / 身份证 / 银行卡） |
 | **GDPR**（跨境用户） | 同上 + SCC/BCR | 同 PIPL |
 | **等保 2.0 三级**（若企业要求） | 访问控制 / 审计 / 完整性 | trace_id + raw.jsonl + Bearer Token + container non-root |

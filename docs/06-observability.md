@@ -283,7 +283,7 @@ class JsonFormatter(logging.Formatter):
 |---|---|---|
 | `DEBUG` | 调试细节，生产默认关闭 | `SessionManager.append` 写入完成、每条 LLM payload |
 | `INFO` | 业务正常关键节点 | `Runner.dispatch` 入队、`MemoryAwareCrew.run_and_index` 完成、Skill 启动/完成 |
-| `WARNING` | 可恢复异常或降级 | tenacity 重试中、Qwen tokenizer 降级到 cl100k_base、LRU 淘汰 session |
+| `WARNING` | 可恢复异常或降级 | tenacity 重试中、DeepSeek tokenizer 降级到 cl100k_base、LRU 淘汰 session |
 | `ERROR` | 业务失败但进程存活 | Skill 超时、飞书 429 超过最大重试、pgvector upsert 失败 |
 | `CRITICAL` | 需立即人工介入 | 启动凭证校验失败、未捕获异常进入 top-level handler |
 
@@ -324,7 +324,7 @@ def mask_pii(text: str) -> str:
 **为什么不在入口 mask**：业务逻辑（搜索、memory-save）需要真实值做匹配；日志层 mask 是"落盘前的最后一步"。
 
 **局限性声明**（必须在 compliance-baseline 标注）：
-- 不覆盖银行卡号 / 地址 / 姓名（Qwen 输出高度非结构化，正则召回率低于 30%）
+- 不覆盖银行卡号 / 地址 / 姓名（DeepSeek 输出高度非结构化，正则召回率低于 30%）
 - 不覆盖自定义昵称含手机号的特殊情况（如 "张三_13812345678"）
 - CI 脚本 `scripts/verify_pii_masking.py` 扫 50 条合成含 PII 日志，召回率应 ≥95%
 
@@ -337,7 +337,7 @@ def mask_pii(text: str) -> str:
 - **前缀**：所有指标统一 `xiaopaw_` 前缀
 - **单位后缀**：`_seconds` / `_bytes` / `_total`（counter 必须以 `_total` 结尾）
 - **label 基数**：所有 label 值集合基数 <100；绝不把 `trace_id` / `session_id` / `routing_key` 写成 label
-- **label 取值白名单**：`routing_type ∈ {p2p, group, thread}`；`status ∈ {ok, timeout, rate_limited, 4xx, 5xx, cancelled, network_error}`；`model ∈ {qwen3-max, qwen-turbo, text-embedding-v3}`
+- **label 取值白名单**：`routing_type ∈ {p2p, group, thread}`；`status ∈ {ok, timeout, rate_limited, 4xx, 5xx, cancelled, network_error}`；`model ∈ {deepseek-v4-flash, deepseek-chat, text-embedding-v3}`
 
 ### 4.2 8 个核心指标（v2 精简）
 
@@ -370,7 +370,7 @@ xiaopaw_llm_calls_total = Counter(
 )
 ```
 
-- **label**：`model ∈ {qwen3-max, qwen-turbo, text-embedding-v3}`；`status ∈ {ok, timeout, rate_limited, 4xx, 5xx, cancelled, network_error}`
+- **label**：`model ∈ {deepseek-v4-flash, deepseek-chat, text-embedding-v3}`；`status ∈ {ok, timeout, rate_limited, 4xx, 5xx, cancelled, network_error}`
 - **埋点**：`AliyunLLM._request` finally 分支；status 含义与打点位置：
   - `ok`：2xx 返回
   - `timeout`：`asyncio.TimeoutError`（包括 tenacity 最后一次重试超时）
@@ -694,7 +694,7 @@ groups:
 
 **阈值由来**：
 - p95 > 60s：对话类产品用户忍耐极限
-- LLM 错误率 > 5%：Qwen 官方 SLA 99% 上的两倍抖动
+- LLM 错误率 > 5%：DeepSeek 官方 SLA 99% 上的两倍抖动
 - Skill 超时 > 0.1/s：单节点场景每分钟 >6 次已明显异常
 - 飞书限流 > 10/5min：正常请求不应触发
 

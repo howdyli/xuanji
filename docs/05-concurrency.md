@@ -749,7 +749,7 @@ def _get_llm_client():
     本项目 asyncio 单事件循环调用此函数，无实际竞态。
     """
     from openai import OpenAI
-    return OpenAI(api_key=_QWEN_API_KEY, base_url=_QWEN_BASE_URL)
+    return OpenAI(api_key=_DEEPSEEK_API_KEY, base_url=_DEEPSEEK_BASE_URL)
 
 
 @cache
@@ -969,13 +969,13 @@ CPython 不支持强制终止线程。shutdown 时必须**承认 zombie** 并打
 - **日活 session**：~500（上限 1000）
 - **峰值 QPS**：单 routing_key 内 0.5/s（用户思考时间）；全局 ~10/s（50 个 rk 同时活跃）
 - **agent p95 延迟**：<60s（SLO）
-- **LLM 调用 p95**：<20s（qwen3-max 在 DashScope 的典型值；**实际值取决于外部 API 抖动**，压测时若接真实 Qwen，需单独基线化）
+- **LLM 调用 p95**：<20s（deepseek-v4-flash 在 DashScope 的典型值；**实际值取决于外部 API 抖动**，压测时若接真实 DeepSeek，需单独基线化）
 
 ### 11.2 预期瓶颈
 
 | 层 | 瓶颈 | 优化 |
 |---|---|---|
-| LLM | Qwen QPS 限制 | 降级到 qwen-turbo；或加大 context prune |
+| LLM | DeepSeek QPS 限制 | 降级到 deepseek-chat；或加大 context prune |
 | Skill Sub-Crew | sandbox MCP 串行 | 按 Skill 调优 `allowed_tools` 减少调用 |
 | pgvector | embedding API 延迟（300ms/call） | 批处理（未来优化） |
 | 飞书 | 发消息 QPS 20-50 | Semaphore(5) 已保护 |

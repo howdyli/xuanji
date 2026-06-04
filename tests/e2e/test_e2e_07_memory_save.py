@@ -36,7 +36,7 @@ class TestMemorySaveE2E:
     """E2E-07: memory-save skill + cross-session recall via Bootstrap."""
 
     async def test_memory_save_cross_session_recall(
-        self, sandbox_client, sandbox_workspace_dir, qwen_api_key, langfuse_available,
+        self, sandbox_client, sandbox_workspace_dir, deepseek_api_key, langfuse_available,
     ):
         """Full 4-step flow from design doc: save → verify file → /new → recall."""
         # Step 1: Ask memory-save to persist user info
@@ -49,7 +49,7 @@ class TestMemorySaveE2E:
         assert llm_assert(
             r_save["reply"],
             "回复确认已保存或记住了用户的信息（如'已记住'、'已保存'、'好的我记下了'等）",
-            api_key=qwen_api_key,
+            api_key=deepseek_api_key,
         ), f"Save confirmation failed. Reply: {r_save['reply'][:500]}"
 
         # Verify workspace/user.md was written on the host
@@ -79,7 +79,7 @@ class TestMemorySaveE2E:
         assert llm_assert(
             r_recall["reply"],
             "回复提到了 Python 或 FastAPI（说明从 Bootstrap 重新加载了 user.md 中保存的记忆）",
-            api_key=qwen_api_key,
+            api_key=deepseek_api_key,
         ), f"Cross-session recall failed. Reply: {r_recall['reply'][:500]}"
 
         # Step 4: Langfuse verification (save turn)

@@ -189,6 +189,41 @@ class TestFalsePositive:
         with pytest.raises(GuardrailDeny):
             guard.before_tool_handler(_tool_ctx("query && cat /etc/passwd"))
 
+    def test_sbx_agent_execution_allows_natural_language_with_pipes(self):
+        """agent_execution wraps user chat input (natural language / markdown);
+        list separators ; or markdown table |  must NOT be flagged as shell injection.
+        Path traversal / dangerous commands / prompt injection still apply.
+        """
+        guard = SandboxGuard()
+        ctx = _tool_ctx(
+            {"content": "请总结今日要闻；带中文全角括号(2026)与表格 | 项 A | 项 B"},
+            tool_name="agent_execution",
+        )
+        guard.before_tool_handler(ctx)
+        assert guard.get_metrics()["total_violations"] == 0
+
+    def test_sbx_agent_execution_still_blocks_path_traversal(self):
+        """agent_execution 只豁免 shell injection；path traversal 还是拦."""
+        guard = SandboxGuard()
+        ctx = _tool_ctx(
+            {"content": "open ../../etc/passwd please"},
+            tool_name="agent_execution",
+        )
+        with pytest.raises(GuardrailDeny, match="sandbox_violation"):
+            guard.before_tool_handler(ctx)
+
+    def test_sbx_skill_loader_allows_natural_language_task_context(self):
+        """skill_loader.task_context is LLM-generated natural language / JSON,
+        which may contain ; | symbols. Must NOT be flagged.
+        """
+        guard = SandboxGuard()
+        ctx = _tool_ctx(
+            {"skill_name": "pptx", "task_context": "制作 PPT；表格列 | A | B | C"},
+            tool_name="skill_loader",
+        )
+        guard.before_tool_handler(ctx)
+        assert guard.get_metrics()["total_violations"] == 0
+
 
 # ── Audit & Metrics ──────────────────────────────────────────────────
 

@@ -52,7 +52,7 @@
 |------|------|------|
 | Input | ✅ | system prompt（XiaoPaw 身份 + Soul + Agent 配置）+ user task |
 | Output | ✅ | `{"action": "tool_calls", "tools": ["agent_execution", "skill_loader"]}` |
-| Model | qwen3-max | ✅ |
+| Model | deepseek-v4-flash | ✅ |
 | Duration | 4.6s | ✅ 正常 |
 | Usage | ❌ | input=0, output=0, total=0 |
 | Parent | tool-agent_execution | ✅ 正确嵌套 |
@@ -147,7 +147,7 @@
 ```python
 # 方案 A: 从 CrewAI callback 获取 token count
 # CrewAI 1.10+ 在 task callback 中暴露 token_usage
-# 方案 B: 从 Qwen API 响应头中获取 usage
+# 方案 B: 从 DeepSeek API 响应头中获取 usage
 # DashScope API 返回 usage.input_tokens / usage.output_tokens
 ```
 

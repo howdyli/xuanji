@@ -29,7 +29,7 @@ RK = "p2p:ou_browse06"
 class TestBrowseAndCodeE2E:
     """E2E-06: web browsing + code execution via sandbox MCP."""
 
-    async def test_browse_example_com(self, sandbox_client, qwen_api_key, langfuse_available):
+    async def test_browse_example_com(self, sandbox_client, deepseek_api_key, langfuse_available):
         result = await send_message(
             sandbox_client,
             "帮我打开 https://example.com 看看页面上写了什么",
@@ -41,12 +41,12 @@ class TestBrowseAndCodeE2E:
         assert llm_assert(
             reply,
             "回复描述了 example.com 页面的内容（如提到 'Example Domain' 或 'illustrative examples'）",
-            api_key=qwen_api_key,
+            api_key=deepseek_api_key,
         ), f"LLM-as-Judge failed. Reply: {reply[:500]}"
         if langfuse_available:
             await assert_langfuse_trace(result["trace_id"])
 
-    async def test_code_execution(self, sandbox_client, qwen_api_key, langfuse_available):
+    async def test_code_execution(self, sandbox_client, deepseek_api_key, langfuse_available):
         result = await send_message(
             sandbox_client,
             "用 Python 代码计算 2 的 20 次方，告诉我结果",

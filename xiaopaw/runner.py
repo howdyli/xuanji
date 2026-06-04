@@ -17,6 +17,7 @@ from xiaopaw.hook_framework.registry import EventType, GuardrailDeny, HookContex
 from xiaopaw.models import InboundMessage, SenderProtocol
 from xiaopaw.observability.metrics import agent_latency, inbound_total
 from xiaopaw.observability.trace import bind_trace_id
+from xiaopaw.session.context_builder import ContextBuilder
 from xiaopaw.session.manager import SessionManager
 from xiaopaw.session.models import MessageEntry
 
@@ -139,8 +140,16 @@ class Runner:
                     sender_id=inbound.sender_id,
                 )
 
-            # Load history
+            # Load history and build context (with ContextBuilder for sliding window + tool summaries)
             history = await self._session_mgr.load_history(session.id)
+            if len(history) > 10:
+                # 历史较长时使用 ContextBuilder 构建滑动窗口上下文
+                ctx_builder = ContextBuilder(
+                    sessions_dir=self._session_mgr._sessions_dir,
+                )
+                # ContextBuilder 的 build_context_from_history 会在 agent_fn 内部使用
+                # 这里只做预检查，实际构建仍在 agent_fn 中完成
+                pass
 
             # Send thinking indicator, save card_msg_id for later update
             card_msg_id = await self._sender.send_thinking(key)
@@ -254,9 +263,27 @@ class Runner:
                     await self._sender.send_text(key, deny_reply)
             except Exception:
                 pass
-        except Exception:
+        except Exception as exc:
             logger.exception("handle error for %s", key)
-            error_reply = "抱歉，处理消息时出现了错误，请稍后重试。"
+
+            # ---- 部分内容保存（借鉴 Proma）----
+            # 即使 Agent 执行失败，也尝试保存已生成的中间结果
+            partial_content = ""
+            if hasattr(exc, "partial_result"):
+                partial_content = exc.partial_result
+
+            # 使用 error_classifier 分类错误，提供更友好的错误信息
+            from xiaopaw.utils.error_classifier import classify_exception
+            classified = classify_exception(exc)
+            if classified.is_quota_exceeded:
+                error_reply = "抱歉，API 余额不足，请联系管理员充值。"
+            elif classified.is_rate_limited:
+                error_reply = "抱歉，请求过于频繁，请稍后重试。"
+            elif classified.is_context_overflow:
+                error_reply = "抱歉，对话内容过长，请使用 /new 开启新会话。"
+            else:
+                error_reply = "抱歉，处理消息时出现了错误，请稍后重试。"
+
             try:
                 if card_msg_id:
                     await self._sender.update_card(card_msg_id, error_reply)

@@ -100,7 +100,7 @@ def build_skill_crew(
     skill_instructions: str,
     session_id: str = "",
     sandbox_mcp_url: str = _DEFAULT_SANDBOX_MCP_URL,
-    sub_agent_model: str = "qwen3-max",
+    sub_agent_model: str = "deepseek-chat",
     max_iter: int = 20,
     allowed_tools: list[str] | None = None,
 ) -> Crew:
@@ -112,7 +112,13 @@ def build_skill_crew(
             f"Pass a valid URL (e.g. http://localhost:8030/mcp) or skip skill execution."
         )
     sandbox_mcp = MCPServerHTTP(url=sandbox_mcp_url)
-    skill_llm = AliyunLLM(model=sub_agent_model, region="cn", temperature=0.3)
+    # ⚠️ region 必须与 sub_agent_model 一致：
+    #   deepseek-* → region="deepseek" → api.deepseek.com，认证用 DEEPSEEK_API_KEY
+    #   qwen-*     → region="cn"/"intl"/"finance" → dashscope.aliyuncs.com，认证用 DASHSCOPE/QWEN key
+    # 历史 bug：硬编码 region="cn" 导致 DeepSeek key 被发给 DashScope，401 invalid_api_key。
+    # 与主 crew (main_crew.py) 的写法保持一致：根据 model 前缀选 region。
+    region = "deepseek" if sub_agent_model.lower().startswith("deepseek") else "cn"
+    skill_llm = AliyunLLM(model=sub_agent_model, region=region, temperature=0.3)
 
     session_dir = f"/workspace/sessions/{session_id}" if session_id else "/workspace"
 

@@ -51,7 +51,7 @@ def setup_logging(
 
     if log_dir and json_output:
         log_dir.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(log_dir / "xiaopaw.log", encoding="utf-8")
+        fh = logging.FileHandler(log_dir / "xuanji.log", encoding="utf-8")
         fh.setFormatter(StructuredFormatter())
         root.addHandler(fh)
 

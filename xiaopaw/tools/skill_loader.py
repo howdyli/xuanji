@@ -231,6 +231,8 @@ class SkillLoaderTool(BaseTool):
     _skill_registry: dict = PrivateAttr(default_factory=dict)
     _instruction_cache: dict = PrivateAttr(default_factory=dict)
     _history_all: list = PrivateAttr(default_factory=list)
+    _enabled_skills: set | None = PrivateAttr(default=None)
+    _user_skills_dir: Path | None = PrivateAttr(default=None)
 
     def __init__(
         self,
@@ -238,6 +240,8 @@ class SkillLoaderTool(BaseTool):
         sandbox_url: str = "",
         routing_key: str = "",
         history_all: list | None = None,
+        enabled_skills: set | list | None = None,
+        user_skills_dir: Path | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -249,6 +253,11 @@ class SkillLoaderTool(BaseTool):
         self._history_all = history_all or []
         self._skill_registry = {}
         self._instruction_cache = {}
+        # None = use all enabled skills; set/list = restrict to subset
+        self._enabled_skills = (
+            set(enabled_skills) if enabled_skills is not None else None
+        )
+        self._user_skills_dir = user_skills_dir
         self._build_description()
 
     def _build_description(self) -> None:
@@ -258,17 +267,47 @@ class SkillLoaderTool(BaseTool):
             return
 
         manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+
+        # Merge user skills directory: each subdir's SKILL.md adds an entry.
+        # User entries override builtin on name conflict.
+        if self._user_skills_dir and self._user_skills_dir.exists():
+            for child in sorted(self._user_skills_dir.iterdir()):
+                if not child.is_dir():
+                    continue
+                if child.name.startswith(".") or child.name == "__pycache__":
+                    continue
+                if not (child / "SKILL.md").exists():
+                    continue
+                # Default to task type; the SKILL.md frontmatter inside
+                # determines actual behaviour at execution time.
+                manifest[child.name] = {
+                    "type": "task",
+                    "enabled": True,
+                    "path": str(child.relative_to(_SKILLS_DIR)) if _SKILLS_DIR in child.parents else None,
+                    "_user_dir": child,
+                }
+
         skills_xml: list[str] = []
 
         for skill_name, skill_cfg in manifest.items():
             if not skill_cfg.get("enabled", True):
                 continue
-            skill_path = skill_cfg.get("path", skill_name)
-            if ".." in skill_path:
-                logger.warning("path traversal blocked in skill: %s", skill_name)
+            # Per-session skill subset filter
+            if self._enabled_skills is not None and skill_name not in self._enabled_skills:
                 continue
+            user_dir_override = skill_cfg.get("_user_dir")
+            if user_dir_override is not None:
+                skill_dir = Path(user_dir_override)
+                skill_path = skill_name
+            else:
+                skill_path = skill_cfg.get("path", skill_name)
+                if skill_path is None:
+                    skill_path = skill_name
+                if ".." in str(skill_path):
+                    logger.warning("path traversal blocked in skill: %s", skill_name)
+                    continue
+                skill_dir = _SKILLS_DIR / skill_path
 
-            skill_dir = _SKILLS_DIR / skill_path
             skill_md = skill_dir / "SKILL.md"
             if not skill_md.exists():
                 continue
@@ -415,7 +454,16 @@ class SkillLoaderTool(BaseTool):
                 inputs[var] = var
 
         try:
-            result = await crew.akickoff(inputs=inputs)
+            # ⚠️ 必须用 kickoff_async，不能用 akickoff。
+            # akickoff 是 native async——整个 sub-crew 跑在 thread B 的 running loop 里；
+            # CrewAI 在 task 结束后会调 _cleanup_mcp_clients() →
+            # MCPToolResolver.cleanup() 内部直接 asyncio.run(_disconnect_all())，
+            # 遇到 running loop 会抛出
+            #   RuntimeError: asyncio.run() cannot be called from a running event loop
+            # kickoff_async 内部是 asyncio.to_thread(self.kickoff)，把同步 kickoff
+            # 调度到 default executor 的 worker thread（无 running loop），asyncio.run() 可用。
+            # asyncio.to_thread 会自动 copy_context()，ContextVar/trace_id 仍会正确传递。
+            result = await crew.kickoff_async(inputs=inputs)
             return str(result)
         finally:
             hook = getattr(crew, "_subcrew_tool_hook", None)
@@ -425,6 +473,9 @@ class SkillLoaderTool(BaseTool):
                     unregister_before_tool_call_hook(hook)
                 except (ValueError, AttributeError):
                     pass
+            # MCPServerHTTP 不提供 stop()；CrewAI 在 _finalize_task_execution 中已调
+            # _cleanup_mcp_clients 做连接断开。这里仅在未来某种 MCP 补充
+            # async stop 接口时作为兼容点。
             for agent in crew.agents:
                 for mcp in getattr(agent, "mcps", []) or []:
                     try:
@@ -459,6 +510,16 @@ class SkillLoaderTool(BaseTool):
         到这里的调用栈已经在 CrewAI 自己的 event loop 中（akickoff），
         在已有 loop 里 run_until_complete 另一个协程会冲突。
         所以另起一个完全独立的子线程，子线程内自建 event loop，互不干扰。
+
+        【sub-crew 必须用 kickoff_async（不是 akickoff）】
+        akickoff 是 native async，整个 sub-crew 都在本子线程的 running loop 里跑。
+        CrewAI 在 task 完成后会调 Agent._cleanup_mcp_clients() →
+        MCPToolResolver.cleanup() 内部直接 asyncio.run(_disconnect_all())，
+        在 running loop 里执行会抛出
+          RuntimeError: asyncio.run() cannot be called from a running event loop
+        kickoff_async 内部 asyncio.to_thread(self.kickoff) 把同步 kickoff 跑在
+        default executor 的 worker thread（无 running loop），cleanup 的 asyncio.run() 可用；
+        且 asyncio.to_thread 会 copy_context()，trace_id/adapter 仍然正确传递。
         """
         if skill_name not in self._skill_registry and skill_name != "history_reader":
             available = ", ".join(sorted(self._skill_registry.keys()))

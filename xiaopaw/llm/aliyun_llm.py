@@ -1,4 +1,4 @@
-"""AliyunLLM: CrewAI BaseLLM adapter for Qwen via DashScope-compatible API."""
+"""AliyunLLM: CrewAI BaseLLM adapter for DeepSeek via OpenAI-compatible API."""
 
 from __future__ import annotations
 
@@ -9,10 +9,14 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 
 import requests
 from crewai import BaseLLM
+
+from xiaopaw.utils.error_classifier import classify_http_error, classify_exception
+from xiaopaw.utils.retry_strategy import RetryConfig, compute_delay_ms_sync
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +28,7 @@ _TRUNCATE_SUFFIX = (
 )
 
 ENDPOINTS = {
+    "deepseek": "https://api.deepseek.com/v1/chat/completions",
     "cn": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
     "intl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
     "finance": "https://dashscope-finance.aliyuncs.com/compatible-mode/v1/chat/completions",
@@ -85,13 +90,13 @@ class AliyunLLM(BaseLLM):
         retry_count: int | None = None,
     ) -> None:
         super().__init__(model=model, temperature=temperature)
-        self.api_key = api_key or os.environ.get("QWEN_API_KEY") or os.environ.get("DASHSCOPE_API_KEY", "")
+        self.api_key = api_key or os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("QWEN_API_KEY") or os.environ.get("DASHSCOPE_API_KEY", "")
         self.region = region
-        self.endpoint = ENDPOINTS.get(region, ENDPOINTS["cn"])
+        self.endpoint = ENDPOINTS.get(region, ENDPOINTS["deepseek"])
         self.image_model = image_model or "qwen3-vl-plus"
         self.timeout = timeout
         self.retry_count = retry_count or int(os.environ.get("LLM_RETRY_COUNT", "2"))
-        self.debug_payload = os.environ.get("QWEN_DEBUG_PAYLOAD", "").lower() in ("1", "true")
+        self.debug_payload = os.environ.get("DEEPSEEK_DEBUG_PAYLOAD") or os.environ.get("QWEN_DEBUG_PAYLOAD", "").lower() in ("1", "true")
 
     def supports_function_calling(self) -> bool:
         return True
@@ -190,31 +195,78 @@ class AliyunLLM(BaseLLM):
             "Authorization": f"Bearer {self.api_key}",
         }
 
+        # ---- 使用 error_classifier + retry_strategy 的智能重试 ----
+        retry_cfg = RetryConfig(
+            max_retries=self.retry_count,
+            base_delay_ms=1000,
+            max_delay_ms=15_000,
+            max_wait_ms=5 * 60_000,
+        )
         last_exc: Exception | None = None
+        elapsed_delay_ms = 0
         for attempt in range(self.retry_count + 1):
             try:
                 resp = requests.post(
                     self.endpoint, json=payload, headers=headers, timeout=self.timeout
                 )
-                if resp.status_code >= 500:
-                    if attempt < self.retry_count:
-                        logger.warning("5xx (attempt %d): %s", attempt + 1, resp.status_code)
-                        continue
-                    resp.raise_for_status()
-                if resp.status_code == 429:
-                    if attempt < self.retry_count:
-                        logger.warning("rate limited (attempt %d)", attempt + 1)
-                        continue
-                    resp.raise_for_status()
                 if resp.status_code >= 400:
-                    logger.error("LLM error %d: %s", resp.status_code, resp.text[:500])
+                    # 使用 error_classifier 分类错误
+                    classified = classify_http_error(
+                        resp.status_code, resp.text[:1000], str(resp.reason)
+                    )
+                    if classified.retryable and attempt < self.retry_count:
+                        delay_ms = compute_delay_ms_sync(
+                            attempt + 1, elapsed_delay_ms, retry_cfg
+                        )
+                        if delay_ms > 0:
+                            logger.warning(
+                                "[%s] attempt %d/%d, waiting %dms (elapsed %dms)",
+                                classified.code, attempt + 1, self.retry_count,
+                                delay_ms, elapsed_delay_ms,
+                            )
+                            time.sleep(delay_ms / 1000)
+                            elapsed_delay_ms += delay_ms
+                            continue
+                    # 不可重试或预算耗尽
+                    logger.error(
+                        "LLM [%s] HTTP %d: %s",
+                        classified.code, resp.status_code, resp.text[:500],
+                    )
                     resp.raise_for_status()
 
                 data = resp.json()
                 choice = data.get("choices", [{}])[0]
                 message = choice.get("message", {})
                 content = message.get("content", "")
+                reasoning_content = message.get("reasoning_content", "")
                 raw_tool_calls = message.get("tool_calls")
+
+                # DeepSeek 思考模式：reasoning_content 必须随同 assistant 消息回传给 API。
+                #
+                # 【现状：占位逻辑，仅在手工 function-calling 路径生效】
+                # 这里把带 reasoning_content 的 assistant 消息追加到本地 `messages` 列表。
+                # - 当 available_functions 不为 None（手工 function-calling）时，下方会调用
+                #   `_handle_function_calls`，它复用本地 `messages` 继续递归 call()，注入有效。
+                # - 当 available_functions 为 None（CrewAI native tool calls 路径）时，本函数
+                #   返回 `_normalize_mcp_tool_arguments(raw_tool_calls)` 后，CrewAI 会自行重建
+                #   下一轮 messages（不读这里的本地副本），导致此处的 append 被丢弃，
+                #   因此**对 native 路径无效**——曾因此触发 DeepSeek 400：
+                #     "The `reasoning_content` in the thinking mode must be passed back".
+                #
+                # 【当前规避方案】
+                # 已在 config.yaml / main_crew.py / skill_crew.py 把模型切到非思考的
+                # `deepseek-chat`，响应不含 reasoning_content，本分支不会进入。
+                #
+                # 【若以后要重新启用思考模式】
+                # 需把 reasoning_content 按 tool_call_id 缓存到实例属性，并在下一轮 call()
+                # 入口扫描 messages，把缓存值注入到对应的 assistant.tool_calls 消息上，
+                # 才能真正满足 DeepSeek 的回传要求。
+                if reasoning_content:
+                    messages.append({
+                        "role": "assistant",
+                        "content": content or "",
+                        "reasoning_content": reasoning_content,
+                    })
 
                 if raw_tool_calls:
                     if available_functions is not None:
@@ -239,16 +291,37 @@ class AliyunLLM(BaseLLM):
 
                 return content
 
-            except requests.Timeout:
-                last_exc = TimeoutError(f"LLM timeout after {self.timeout}s")
-                if attempt < self.retry_count:
-                    logger.warning("timeout (attempt %d)", attempt + 1)
-                    continue
+            except requests.Timeout as exc:
+                last_exc = exc
+                classified = classify_exception(exc)
+                if classified.retryable and attempt < self.retry_count:
+                    delay_ms = compute_delay_ms_sync(
+                        attempt + 1, elapsed_delay_ms, retry_cfg
+                    )
+                    if delay_ms > 0:
+                        logger.warning(
+                            "[timeout] attempt %d/%d, waiting %dms",
+                            attempt + 1, self.retry_count, delay_ms,
+                        )
+                        time.sleep(delay_ms / 1000)
+                        elapsed_delay_ms += delay_ms
+                        continue
             except requests.RequestException as exc:
                 last_exc = exc
-                if attempt < self.retry_count:
-                    logger.warning("request error (attempt %d): %s", attempt + 1, exc)
-                    continue
+                classified = classify_exception(exc)
+                if classified.retryable and attempt < self.retry_count:
+                    delay_ms = compute_delay_ms_sync(
+                        attempt + 1, elapsed_delay_ms, retry_cfg
+                    )
+                    if delay_ms > 0:
+                        logger.warning(
+                            "[%s] attempt %d/%d: %s, waiting %dms",
+                            classified.code, attempt + 1, self.retry_count,
+                            exc, delay_ms,
+                        )
+                        time.sleep(delay_ms / 1000)
+                        elapsed_delay_ms += delay_ms
+                        continue
 
         raise last_exc or RuntimeError("LLM call failed after all retries")
 

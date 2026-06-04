@@ -1,4 +1,4 @@
-"""CronService: scheduled task execution."""
+"""CronService: scheduled task execution with automation support."""
 
 from __future__ import annotations
 
@@ -72,11 +72,22 @@ class CronService:
             logger.warning("invalid cron expression: %s (job %s)", job.cron_expr, job.id)
             return False
 
+    def _build_content(self, job: CronJob) -> str:
+        """Build the message content, injecting skill wrapper if needed."""
+        if job.action_type == "skill" and job.skill_name:
+            task_name = job.name or job.id
+            return f"[Auto Task: {task_name}]\n请使用技能：{job.skill_name}\n\n{job.content}"
+        if job.name:
+            return f"[Auto Task: {job.name}]\n{job.content}"
+        return job.content
+
     async def _run_job(self, job: CronJob) -> None:
         trace_id = f"cron-{job.id}-{uuid.uuid4().hex[:8]}"
+        content = self._build_content(job)
+
         inbound = InboundMessage(
             routing_key=job.routing_key,
-            content=job.content,
+            content=content,
             msg_id=f"cron_{job.id}_{int(time.time())}",
             sender_id="cron",
             ts=int(time.time() * 1000),
@@ -87,9 +98,13 @@ class CronService:
         try:
             await self._dispatch(inbound)
             logger.info("cron job %s dispatched", job.id)
+            # Update run status to success
+            self._storage.update_run_status(job.id, "success")
         except Exception as exc:
             logger.exception("cron job %s failed", job.id)
             job_updated = job.model_copy(update={"fail_count": job.fail_count + 1})
+            # Update run status to failed
+            self._storage.update_run_status(job.id, "failed", increment_fail=True)
             if job_updated.fail_count >= job.max_retries:
                 self._storage.append_dlq(job_updated, str(exc))
                 cron_dlq_total.inc()

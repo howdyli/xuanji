@@ -28,15 +28,15 @@ RK = "p2p:ou_conv03"
 class TestMultiTurnE2E:
     """E2E-03: 5-step multi-turn with /new reset."""
 
-    async def test_greeting(self, llm_client, qwen_api_key, langfuse_available):
+    async def test_greeting(self, llm_client, deepseek_api_key, langfuse_available):
         result = await send_message(llm_client, "你好", routing_key=RK, timeout=300.0)
         reply = result["reply"]
         assert reply and len(reply) > 0
-        assert llm_assert(reply, "回复是友好的问候", api_key=qwen_api_key)
+        assert llm_assert(reply, "回复是友好的问候", api_key=deepseek_api_key)
         if langfuse_available:
             await assert_langfuse_trace(result["trace_id"])
 
-    async def test_context_retained_across_turns(self, llm_client, qwen_api_key, langfuse_available):
+    async def test_context_retained_across_turns(self, llm_client, deepseek_api_key, langfuse_available):
         rk = "p2p:ou_conv03_ctx"
         await send_message(llm_client, "你好", routing_key=rk, timeout=300.0)
         await send_message(
@@ -56,12 +56,12 @@ class TestMultiTurnE2E:
         assert llm_assert(
             reply,
             "回复提到了张三和Python（或编程/工程师）",
-            api_key=qwen_api_key,
+            api_key=deepseek_api_key,
         )
         if langfuse_available:
             await assert_langfuse_trace_quality(result["trace_id"])
 
-    async def test_new_clears_context(self, llm_client, qwen_api_key, langfuse_available):
+    async def test_new_clears_context(self, llm_client, deepseek_api_key, langfuse_available):
         rk = "p2p:ou_conv03_new"
         await send_message(
             llm_client, "我叫张三", routing_key=rk, timeout=300.0
@@ -73,7 +73,7 @@ class TestMultiTurnE2E:
         assert llm_assert(
             result["reply"],
             "回复表示不知道或无法确定用户的名字",
-            api_key=qwen_api_key,
+            api_key=deepseek_api_key,
         )
         if langfuse_available:
             await assert_langfuse_trace_quality(result["trace_id"])

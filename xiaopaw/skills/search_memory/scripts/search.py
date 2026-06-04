@@ -28,13 +28,13 @@ DB_DSN = os.getenv(
     "MEMORY_DB_DSN",
     "postgresql://xiaopaw:xiaopaw123@localhost:5432/xiaopaw_memory",
 )
-QWEN_API_KEY = os.getenv("QWEN_API_KEY", "")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY") or os.getenv("QWEN_API_KEY", "")
 EMBED_MODEL  = "text-embedding-v3"
 EMBED_DIM    = 1024
 
 _embed_client = OpenAI(
-    api_key  = QWEN_API_KEY,
-    base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    api_key  = DEEPSEEK_API_KEY,
+    base_url = os.getenv("DEEPSEEK_BASE_URL") or os.getenv("QWEN_BASE_URL", "https://api.deepseek.com/v1"),
 )
 
 
