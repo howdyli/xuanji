@@ -99,22 +99,32 @@ export function MarkdownRenderer({ content }: { content: string }) {
           // ── Headings ────────────────────────────────────────────
           h1({ children, ...props }) {
             return (
-              <h1 className="text-xl font-semibold text-gray-900 mt-5 mb-2 pb-1.5 border-b border-gray-200" {...props}>
+              <h1 className="md-h1 text-xl font-bold text-gray-900 mt-6 mb-2.5 pb-2 border-b border-gray-200" {...props}>
                 {children}
               </h1>
             )
           },
           h2({ children, ...props }) {
             return (
-              <h2 className="text-lg font-semibold text-gray-800 mt-4 mb-2" {...props}>
+              <h2 className="md-h2 text-lg font-semibold text-gray-800 mt-5 mb-2 pl-3 border-l-[3px] border-[var(--accent)]" {...props}>
                 {children}
               </h2>
             )
           },
           h3({ children, ...props }) {
+            // Auto-detect numbered headings like "3.1 xxx" and color the number
+            const textContent = extractText(children)
+            const numberMatch = textContent.match(/^(\d+\.\d+(?:\.\d+)?)\s*(.*)$/)
             return (
-              <h3 className="text-base font-semibold text-gray-800 mt-3 mb-1.5" {...props}>
-                {children}
+              <h3 className="md-h3 text-base font-semibold text-gray-800 mt-4 mb-1.5 flex items-center gap-1.5" {...props}>
+                {numberMatch ? (
+                  <>
+                    <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-[var(--accent-light)] text-[var(--accent-text)] text-[13px] font-bold min-w-[2.5em]">
+                      {numberMatch[1]}
+                    </span>
+                    <span>{numberMatch[2]}</span>
+                  </>
+                ) : children}
               </h3>
             )
           },
@@ -138,22 +148,31 @@ export function MarkdownRenderer({ content }: { content: string }) {
           // ── Lists ───────────────────────────────────────────────
           ul({ children, ...props }) {
             return (
-              <ul className="mb-2.5 pl-5 space-y-1 list-disc marker:text-gray-400" {...props}>
+              <ul className="mb-2.5 pl-5 space-y-1.5 list-disc marker:text-gray-400" {...props}>
                 {children}
               </ul>
             )
           },
           ol({ children, ...props }) {
             return (
-              <ol className="mb-2.5 pl-5 space-y-1 list-decimal marker:text-gray-500 marker:font-medium" {...props}>
+              <ol className="mb-2.5 pl-5 space-y-1.5 list-decimal marker:text-[var(--accent-text)] marker:font-semibold" {...props}>
                 {children}
               </ol>
             )
           },
           li({ children, ...props }) {
+            // Auto-highlight "Key：value" patterns — bold the key part
+            const textContent = extractText(children)
+            const kvMatch = textContent.match(/^([^：:]+)[：:](.*)$/)
             return (
               <li className="leading-relaxed" {...props}>
-                {children}
+                {kvMatch ? (
+                  <>
+                    <strong className="font-semibold text-gray-800">{kvMatch[1]}</strong>
+                    <span className="text-gray-400 mx-0.5">：</span>
+                    <span>{kvMatch[2].trim()}</span>
+                  </>
+                ) : children}
               </li>
             )
           },
@@ -173,7 +192,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
           // ── Tables ──────────────────────────────────────────────
           table({ children, ...props }) {
             return (
-              <div className="my-3 overflow-x-auto rounded-lg border border-gray-200">
+              <div className="my-3.5 overflow-x-auto rounded-xl border border-gray-200 shadow-sm md-table-wrap">
                 <table className="w-full text-[13px] border-collapse" {...props}>
                   {children}
                 </table>
@@ -182,21 +201,21 @@ export function MarkdownRenderer({ content }: { content: string }) {
           },
           thead({ children, ...props }) {
             return (
-              <thead className="bg-gray-50" {...props}>
+              <thead className="bg-gradient-to-r from-gray-50 to-gray-100/80" {...props}>
                 {children}
               </thead>
             )
           },
           th({ children, ...props }) {
             return (
-              <th className="px-3 py-2 text-left font-semibold text-gray-700 border-b border-gray-200" {...props}>
+              <th className="px-3.5 py-2.5 text-left font-semibold text-gray-700 border-b-2 border-gray-200 whitespace-nowrap" {...props}>
                 {children}
               </th>
             )
           },
           td({ children, ...props }) {
             return (
-              <td className="px-3 py-2 border-b border-gray-100 text-gray-600" {...props}>
+              <td className="px-3.5 py-2.5 border-b border-gray-100 text-gray-600 md-td" {...props}>
                 {children}
               </td>
             )

@@ -317,7 +317,7 @@ function Sidebar({
           <button
             key={item.id}
             onClick={() => onNavChange(item.id)}
-            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-colors ${
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] sidebar-item ${
               activeNav === item.id ? 't-bg-tertiary t-text-primary' : 't-text-secondary t-bg-hover'
             }`}
           >
@@ -331,7 +331,7 @@ function Sidebar({
           <button
             key={item.id}
             onClick={() => onNavChange(item.id)}
-            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-colors ${
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] sidebar-item ${
               activeNav === item.id ? 't-bg-tertiary t-text-primary' : 't-text-secondary t-bg-hover'
             }`}
           >
@@ -343,7 +343,7 @@ function Sidebar({
           <button
             key={item.id}
             onClick={() => onNavChange(item.id)}
-            className={`w-full flex items-center justify-between gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-colors ${
+            className={`w-full flex items-center justify-between gap-2.5 px-3 py-2 rounded-lg text-[13px] sidebar-item ${
               activeNav === item.id ? 't-bg-tertiary t-text-primary' : 't-text-secondary t-bg-hover'
             }`}
           >
@@ -507,6 +507,14 @@ function ComingSoonView({ icon, title, description }: { icon: React.ReactNode; t
   )
 }
 
+// --- Quick action card (expert-style) ---
+const WELCOME_ACTIONS = [
+  { title: '写一份项目方案', desc: '梳理需求并输出文档', prompt: '帮我写一份项目方案，包含需求梳理、技术选型和实施计划', icon: '📋', accent: 'from-blue-400 to-indigo-500' },
+  { title: '分析市场数据', desc: '采集数据并生成报告', prompt: '帮我分析市场数据，生成一份分析报告', icon: '📊', accent: 'from-emerald-400 to-teal-500' },
+  { title: '生成演示PPT', desc: '自动排版幻灯片', prompt: '帮我生成一份演示PPT', icon: '📑', accent: 'from-orange-400 to-rose-500' },
+  { title: '搜索历史记忆', desc: '查找之前的对话', prompt: '搜索我的历史记忆，查找相关内容', icon: '🔍', accent: 'from-purple-400 to-fuchsia-500' },
+]
+
 // --- Welcome Hero (Empty state) ---
 function WelcomeHero({
   onSend,
@@ -527,44 +535,53 @@ function WelcomeHero({
     setText('')
   }
 
+  // Auto-grow textarea
+  const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setText(e.target.value)
+    const el = e.target
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+  }
+
   return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="min-h-full flex flex-col items-center justify-center px-4 sm:px-6 py-6 sm:py-10">
-        {/* Robot illustration */}
-        <div className="mb-2 sm:mb-3">
+    <div className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 py-4 sm:py-8 overflow-y-auto">
+      <div className="w-full max-w-2xl sm:max-w-3xl xl:max-w-4xl flex flex-col items-center gap-4 sm:gap-5">
+        {/* Logo */}
+        <div className="shrink-0">
           <RobotIllustration />
         </div>
 
         {/* Tagline */}
-        <h1 className="text-2xl sm:text-3xl md:text-[28px] lg:text-[32px] font-medium text-gray-800 tracking-tight mb-6 sm:mb-10 text-center">
-          玄机靠谱的工作伙伴
+        <h1 className="text-2xl sm:text-3xl md:text-[28px] lg:text-[32px] font-medium text-gray-800 tracking-tight text-center leading-tight">
+          玄机<span className="font-normal text-gray-500">·</span>靠谱的工作伙伴
         </h1>
 
-        {/* Quick action cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 w-full max-w-2xl sm:max-w-3xl xl:max-w-4xl mb-6 sm:mb-8">
-          {[
-            { title: '写一份项目方案', desc: '梳理需求并输出文档', prompt: '帮我写一份项目方案，包含需求梳理、技术选型和实施计划' },
-            { title: '分析市场数据', desc: '采集数据并生成报告', prompt: '帮我分析市场数据，生成一份分析报告' },
-            { title: '生成演示PPT', desc: '自动排版幻灯片', prompt: '帮我生成一份演示PPT' },
-            { title: '搜索历史记忆', desc: '查找之前的对话', prompt: '搜索我的历史记忆，查找相关内容' },
-          ].map((s) => (
+        {/* Quick action cards — expert style */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 w-full">
+          {WELCOME_ACTIONS.map((s) => (
             <button
               key={s.title}
               onClick={() => onSend(s.prompt)}
               disabled={loading}
-              className="p-3 rounded-xl bg-white border border-gray-200 hover:border-blue-300 hover:shadow-sm transition-all text-left disabled:opacity-50"
+              className="group relative p-3.5 rounded-xl bg-white border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all text-left disabled:opacity-50 overflow-hidden"
             >
-              <div className="text-[13px] font-medium text-gray-800">{s.title}</div>
-              <div className="text-[11px] text-gray-400 mt-1">{s.desc}</div>
+              {/* Accent top bar */}
+              <div className={`absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r ${s.accent} opacity-0 group-hover:opacity-100 transition-opacity`} />
+              {/* Icon + title */}
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-base">{s.icon}</span>
+                <span className="text-[13px] font-semibold text-gray-800 leading-tight">{s.title}</span>
+              </div>
+              <div className="text-[11px] text-gray-400 leading-snug">{s.desc}</div>
             </button>
           ))}
         </div>
 
-        {/* Input box */}
-        <div className="w-full max-w-2xl sm:max-w-3xl xl:max-w-4xl">
+        {/* Input area — unified with cards above */}
+        <div className="w-full">
           <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
             {/* Top toolbar */}
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100">
+            <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-100">
               <button className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:bg-gray-100 hover:text-gray-600">
                 <AtIcon />
               </button>
@@ -573,11 +590,11 @@ function WelcomeHero({
               </button>
             </div>
 
-            {/* Textarea */}
+            {/* Textarea — auto-grow */}
             <textarea
               ref={inputRef}
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={handleInput}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
@@ -585,14 +602,15 @@ function WelcomeHero({
                 }
               }}
               placeholder="输入消息..."
-              rows={3}
+              rows={2}
               disabled={loading}
-              className="w-full resize-none px-4 py-3 text-[13.5px] outline-none text-gray-800 placeholder-gray-400 bg-transparent disabled:opacity-50"
+              className="w-full resize-none px-4 py-2.5 text-[13.5px] outline-none text-gray-800 placeholder-gray-400 bg-transparent disabled:opacity-50"
+              style={{ maxHeight: '200px' }}
             />
 
             {/* Bottom toolbar */}
-            <div className="flex items-center justify-between px-3 py-2 border-t border-gray-100 bg-gray-50/60">
-              <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between px-3 py-2 border-t border-gray-100 bg-gray-50/60 flex-wrap gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 {/* Safety badge */}
                 <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-blue-50 text-blue-600 text-[10.5px] font-medium" title="安全沙箱环境">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
@@ -601,16 +619,16 @@ function WelcomeHero({
                 <div className="w-px h-4 bg-gray-200" />
                 {/* Mode switcher */}
                 <div className="flex items-center gap-1 bg-gray-100 rounded-full p-1">
-                <button className="flex items-center gap-1 px-3 py-1.5 rounded-full text-[12px] bg-gray-900 text-white shadow-sm" title="精细创作：由专家角色深度执行">
-                  <CodeIcon />
-                  <span>Craft</span>
-                </button>
-                <button className="flex items-center gap-1 px-3 py-1.5 rounded-full text-[12px] text-gray-600 hover:bg-white/70" title="智能路由：AI 自动选择最佳执行方式">
-                  <span className="w-3.5 h-3.5 rounded-full bg-gradient-to-br from-purple-400 to-pink-400" />
-                  <span>Auto</span>
-                </button>
-                <SkillButton sessionId={sessionId} />
-              </div>
+                  <button className="flex items-center gap-1 px-3 py-1.5 rounded-full text-[12px] bg-gray-900 text-white shadow-sm" title="精细创作：由专家角色深度执行">
+                    <CodeIcon />
+                    <span>Craft</span>
+                  </button>
+                  <button className="flex items-center gap-1 px-3 py-1.5 rounded-full text-[12px] text-gray-600 hover:bg-white/70" title="智能路由：AI 自动选择最佳执行方式">
+                    <span className="w-3.5 h-3.5 rounded-full bg-gradient-to-br from-purple-400 to-pink-400" />
+                    <span>Auto</span>
+                  </button>
+                  <SkillButton sessionId={sessionId} />
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <button className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] text-gray-500 hover:bg-white border border-transparent hover:border-gray-200">
@@ -629,7 +647,7 @@ function WelcomeHero({
           </div>
 
           {/* Footer notice */}
-          <div className="text-center mt-3 text-[12px] text-gray-400">
+          <div className="text-center mt-2 text-[11px] text-gray-400">
             内容由 AI 生成，请核实重要信息。
           </div>
         </div>
@@ -768,6 +786,45 @@ function renderContent(content: string): React.ReactNode {
   });
 }
 
+// ── Collapsible content wrapper ──────────────────────────────────────────────
+const COLLAPSE_THRESHOLD = 480 // px — roughly 20 lines of content
+
+function CollapsibleBubble({ children, isUser }: { children: React.ReactNode; isUser: boolean }) {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [collapsed, setCollapsed] = useState(!isUser)
+  const [overflows, setOverflows] = useState(false)
+
+  useEffect(() => {
+    if (!isUser && contentRef.current) {
+      const h = contentRef.current.scrollHeight
+      setOverflows(h > COLLAPSE_THRESHOLD)
+      if (h <= COLLAPSE_THRESHOLD) setCollapsed(false)
+    }
+  }, [isUser])
+
+  return (
+    <div className="relative">
+      <div
+        ref={contentRef}
+        className={overflows && collapsed ? 'max-h-[480px] overflow-hidden' : ''}
+      >
+        {children}
+      </div>
+      {overflows && collapsed && (
+        <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-[var(--bg-bubble-assistant)] to-transparent pointer-events-none" />
+      )}
+      {overflows && (
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="mt-1.5 text-[12px] text-[var(--accent-text)] font-medium hover:underline"
+        >
+          {collapsed ? '展开完整内容 ↓' : '收起内容 ↑'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 // ── Message bubble ───────────────────────────────────────────────────────────
 function MessageBubble({ msg }: { msg: Message }) {
   const isUser = msg.role === 'user'
@@ -787,10 +844,16 @@ function MessageBubble({ msg }: { msg: Message }) {
           className={`rounded-2xl px-4 py-2.5 text-[13.5px] ${
             isUser
               ? 'bg-[var(--bg-bubble-user)] text-[var(--text-bubble-user)] rounded-tr-sm leading-relaxed whitespace-pre-wrap'
-              : 'bg-[var(--bg-bubble-assistant)] text-[var(--text-bubble-assistant)] border t-border-primary rounded-tl-sm shadow-sm'
+              : 'bg-[var(--bg-bubble-assistant)] text-[var(--text-bubble-assistant)] border t-border-primary rounded-tl-sm shadow-sm msg-bubble-ai'
           }`}
         >
-          {isUser ? renderContent(msg.content) : <MarkdownRenderer content={msg.content} />}
+          {isUser ? (
+            renderContent(msg.content)
+          ) : (
+            <CollapsibleBubble isUser={false}>
+              <MarkdownRenderer content={msg.content} />
+            </CollapsibleBubble>
+          )}
         </div>
         <span className="text-[10px] t-text-tertiary mt-1">
           {new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
@@ -1091,7 +1154,7 @@ function App() {
         />
         {/* Active expert indicator */}
         {activeExpert && activeNav === 'assistant' && (
-          <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-100 flex items-center gap-2 text-[11.5px] text-blue-700">
+          <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-100 flex items-center gap-2 text-[11.5px] text-blue-700 animate-fade-in">
             <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
             <span>当前专家：{activeExpert}</span>
             <button
@@ -1106,52 +1169,72 @@ function App() {
           </div>
         )}
         {activeNav === 'workspace' ? (
-          <WorkspaceView />
+          <div className="flex-1 flex flex-col min-h-0 view-enter">
+            <WorkspaceView />
+          </div>
         ) : activeNav === 'expert' ? (
-          authToken && (
-            <ExpertManagerView
-              authToken={authToken}
-              activeExpert={activeExpert}
-              onSelectExpert={(name) => {
-                setActiveExpert(name)
-                if (name) localStorage.setItem('active_expert', name)
-                else localStorage.removeItem('active_expert')
-              }}
-            />
-          )
+          <div className="flex-1 flex flex-col min-h-0 view-enter">
+            {authToken && (
+              <ExpertManagerView
+                authToken={authToken}
+                activeExpert={activeExpert}
+                onSelectExpert={(name) => {
+                  setActiveExpert(name)
+                  if (name) localStorage.setItem('active_expert', name)
+                  else localStorage.removeItem('active_expert')
+                }}
+              />
+            )}
+          </div>
         ) : activeNav === 'automation' ? (
-          authToken && <AutomationManagerView authToken={authToken} />
+          <div className="flex-1 flex flex-col min-h-0 view-enter">
+            {authToken && <AutomationManagerView authToken={authToken} />}
+          </div>
         ) : activeNav === 'skill' ? (
-          // 保留旧版为兼容入口：地址栏加 #legacy-skills 即可切回两栏列表版
-          typeof window !== 'undefined' && window.location.hash === '#legacy-skills' ? (
-            <SkillsPanel onClose={() => setActiveNav('assistant')} />
-          ) : (
-            <SkillManagerView />
-          )
+          <div className="flex-1 flex flex-col min-h-0 view-enter">
+            {/* 保留旧版为兼容入口：地址栏加 #legacy-skills 即可切回两栏列表版 */}
+            {typeof window !== 'undefined' && window.location.hash === '#legacy-skills' ? (
+              <SkillsPanel onClose={() => setActiveNav('assistant')} />
+            ) : (
+              <SkillManagerView />
+            )}
+          </div>
         ) : activeNav === 'model-config' ? (
-          authToken && <ModelConfigView authToken={authToken} />
+          <div className="flex-1 flex flex-col min-h-0 view-enter">
+            {authToken && <ModelConfigView authToken={authToken} />}
+          </div>
         ) : activeNav === 'connector' ? (
-          <ComingSoonView icon={<ConnectorIcon />} title="连接器" description="整合第三方服务（飞书、企业微信等），统一管理消息通道" />
+          <div className="flex-1 flex flex-col min-h-0 view-enter">
+            <ComingSoonView icon={<ConnectorIcon />} title="连接器" description="整合第三方服务（飞书、企业微信等），统一管理消息通道" />
+          </div>
         ) : activeNav === 'explore' ? (
-          <ComingSoonView icon={<ExploreIcon />} title="探索" description="发现新技能、专家和工作流，扩展玄机的能力边界" />
+          <div className="flex-1 flex flex-col min-h-0 view-enter">
+            <ComingSoonView icon={<ExploreIcon />} title="探索" description="发现新技能、专家和工作流，扩展玄机的能力边界" />
+          </div>
         ) : activeNav === 'library' ? (
-          <ComingSoonView icon={<LibraryIcon />} title="资料库" description="管理文档、笔记和知识库，为 AI 提供持续的记忆支持" />
+          <div className="flex-1 flex flex-col min-h-0 view-enter">
+            <ComingSoonView icon={<LibraryIcon />} title="资料库" description="管理文档、笔记和知识库，为 AI 提供持续的记忆支持" />
+          </div>
         ) : messages.length === 0 && historyLoading ? (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="flex items-center gap-2 text-gray-400 text-[13px]">
-              <span className="w-4 h-4 rounded-full border-2 border-gray-300 border-t-gray-600 animate-spin" />
+          <div className="flex-1 flex items-center justify-center view-enter">
+            <div className="flex flex-col items-center gap-3 text-gray-400 text-[13px]">
+              <span className="w-5 h-5 rounded-full border-2 border-gray-300 border-t-gray-600 animate-spin" />
               加载任务中...
             </div>
           </div>
         ) : messages.length === 0 ? (
-          <WelcomeHero onSend={handleSend} loading={loading} sessionId={activeSessionId} />
+          <div className="flex-1 flex flex-col min-h-0 view-enter">
+            <WelcomeHero onSend={handleSend} loading={loading} sessionId={activeSessionId} />
+          </div>
         ) : (
-          <ChatView
-            messages={messages}
-            loading={loading}
-            onSend={handleSend}
-            sessionId={activeSessionId}
-          />
+          <div className="flex-1 flex flex-col min-h-0 view-enter">
+            <ChatView
+              messages={messages}
+              loading={loading}
+              onSend={handleSend}
+              sessionId={activeSessionId}
+            />
+          </div>
         )}
       </main>
       {showAppearance && <AppearanceSettings onClose={() => setShowAppearance(false)} />}

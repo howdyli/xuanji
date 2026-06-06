@@ -275,12 +275,16 @@ class Runner:
             # 使用 error_classifier 分类错误，提供更友好的错误信息
             from xiaopaw.utils.error_classifier import classify_exception
             classified = classify_exception(exc)
+            exc_str = str(exc)
             if classified.is_quota_exceeded:
                 error_reply = "抱歉，API 余额不足，请联系管理员充值。"
             elif classified.is_rate_limited:
                 error_reply = "抱歉，请求过于频繁，请稍后重试。"
             elif classified.is_context_overflow:
                 error_reply = "抱歉，对话内容过长，请使用 /new 开启新会话。"
+            elif "Database initialization error" in exc_str or "unable to open database file" in exc_str:
+                error_reply = "抱歉，AI 引擎初始化存储失败，请稍后重试或联系管理员。"
+                logger.error("CrewAI storage error — check CREWAI_STORAGE_DIR and disk permissions")
             else:
                 error_reply = "抱歉，处理消息时出现了错误，请稍后重试。"
 

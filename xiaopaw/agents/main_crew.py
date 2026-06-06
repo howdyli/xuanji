@@ -294,9 +294,30 @@ class MemoryAwareCrew:
 
     async def run_and_index(self) -> str:
         try:
-            result = await self.crew().akickoff(
-                inputs={"user_message": self.user_message}
-            )
+            max_retries = 2
+            last_exc: Exception | None = None
+
+            for attempt in range(max_retries):
+                try:
+                    result = await self.crew().akickoff(
+                        inputs={"user_message": self.user_message}
+                    )
+                    break  # success
+                except Exception as exc:
+                    last_exc = exc
+                    exc_str = str(exc)
+                    # Retry on transient CrewAI storage/DB errors
+                    if "Database initialization error" in exc_str or "unable to open database file" in exc_str:
+                        if attempt < max_retries - 1:
+                            logger.warning(
+                                "CrewAI DB error (attempt %d/%d), retrying: %s",
+                                attempt + 1, max_retries, exc_str,
+                            )
+                            # Clean stale WAL/SHM files that may block SQLite
+                            self._cleanup_crewai_db_locks()
+                            await asyncio.sleep(1.0)
+                            continue
+                    raise  # non-retryable or exhausted retries
 
             new_msgs = self._last_msgs[self._history_len:] if self._last_msgs else []
             append_session_raw(self.session_id, new_msgs, self._ctx_dir)
@@ -323,6 +344,20 @@ class MemoryAwareCrew:
                 unregister_before_tool_call_hook(self.before_tool_hook)
             except (ValueError, AttributeError):
                 pass
+
+    @staticmethod
+    def _cleanup_crewai_db_locks() -> None:
+        """Remove stale WAL/SHM lock files that can block SQLite reopening."""
+        try:
+            from crewai_core.paths import db_storage_path
+            db_dir = Path(db_storage_path())
+            for suffix in ("-wal", "-shm"):
+                lock_file = db_dir / f"latest_kickoff_task_outputs.db{suffix}"
+                if lock_file.exists() and lock_file.stat().st_size == 0:
+                    lock_file.unlink(missing_ok=True)
+                    logger.info("removed stale CrewAI DB lock file: %s", lock_file)
+        except Exception as e:
+            logger.debug("cleanup_crewai_db_locks: %s", e)
 
 
 def build_agent_fn(

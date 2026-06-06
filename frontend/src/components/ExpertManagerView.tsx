@@ -1,8 +1,9 @@
 /**
- * ExpertManagerView —— 专家团队展示页（workbuddy 风格）
+ * ExpertManagerView —— 专家团队展示页（参考 WorkBuddy 专家市场风格）
  *
- * 布局：分类标签导航 + 2列大卡片网格
- * 卡片：图标 + 标题 + 标签 + 描述 + 团队/成员 + 使用次数 + 召唤按钮
+ * 布局：分类标签导航 + 3列卡片网格
+ * 卡片：插画风头像 + 角色名 + 团队名 + 简介 + 技能标签 + 召唤按钮
+ * 标签：按领域着色 + 小图标前缀 + 状态变体（普通/推荐/热门）
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
@@ -70,7 +71,7 @@ const ChevronDownSvg = () => (
   </svg>
 )
 
-// ─── Icon emoji map ─────────────────────────────────────────────────────
+// ─── Icon emoji map (expert type → avatar illustration icon) ─────────────
 const ICON_EMOJIS: Record<string, string> = {
   dev: '👨‍💻',
   trading: '📊',
@@ -85,6 +86,76 @@ const ICON_EMOJIS: Record<string, string> = {
   doc: '📄',
   researcher: '🔍',
   expert: '🧠',
+}
+
+// ─── Domain color map (for skill tags) ─────────────────────────────────
+// Maps category keywords to color schemes: [bg, text, border]
+const DOMAIN_COLORS: Record<string, { bg: string; text: string; border: string; icon: string }> = {
+  // Tech / Engineering
+  '技术': { bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe', icon: '⚙️' },
+  '开发': { bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe', icon: '💻' },
+  '架构': { bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe', icon: '🏗️' },
+  '代码': { bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe', icon: '👾' },
+  '运维': { bg: '#ecfdf5', text: '#047857', border: '#a7f3d0', icon: '🛠️' },
+  '云':   { bg: '#ecfdf5', text: '#047857', border: '#a7f3d0', icon: '☁️' },
+  // Finance
+  '交易': { bg: '#fefce8', text: '#a16207', border: '#fde68a', icon: '💹' },
+  '风险': { bg: '#fefce8', text: '#a16207', border: '#fde68a', icon: '⚠️' },
+  '投资': { bg: '#fefce8', text: '#a16207', border: '#fde68a', icon: '💰' },
+  '估值': { bg: '#fefce8', text: '#a16207', border: '#fde68a', icon: '📊' },
+  '资金': { bg: '#fefce8', text: '#a16207', border: '#fde68a', icon: '🏦' },
+  '产业': { bg: '#fefce8', text: '#a16207', border: '#fde68a', icon: '🏭' },
+  // Content / Design
+  '内容': { bg: '#fdf2f8', text: '#be185d', border: '#fbcfe8', icon: '✍️' },
+  '文案': { bg: '#fdf2f8', text: '#be185d', border: '#fbcfe8', icon: '📝' },
+  '设计': { bg: '#fdf2f8', text: '#be185d', border: '#fbcfe8', icon: '🎨' },
+  '品牌': { bg: '#fdf2f8', text: '#be185d', border: '#fbcfe8', icon: '🏷️' },
+  '视频': { bg: '#fdf2f8', text: '#be185d', border: '#fbcfe8', icon: '🎬' },
+  // Research / Data
+  '研究': { bg: '#f5f3ff', text: '#6d28d9', border: '#c4b5fd', icon: '🔬' },
+  '分析': { bg: '#f5f3ff', text: '#6d28d9', border: '#c4b5fd', icon: '📊' },
+  '报告': { bg: '#f5f3ff', text: '#6d28d9', border: '#c4b5fd', icon: '📄' },
+  '数据': { bg: '#f5f3ff', text: '#6d28d9', border: '#c4b5fd', icon: '📡' },
+  // Business / OPC
+  '商业': { bg: '#fff7ed', text: '#c2410c', border: '#fed7aa', icon: '💼' },
+  '创业': { bg: '#fff7ed', text: '#c2410c', border: '#fed7aa', icon: '🚀' },
+  '模式': { bg: '#fff7ed', text: '#c2410c', border: '#fed7aa', icon: '🧩' },
+  '管理': { bg: '#fff7ed', text: '#c2410c', border: '#fed7aa', icon: '📋' },
+  '组织': { bg: '#fff7ed', text: '#c2410c', border: '#fed7aa', icon: '👥' },
+  '交付': { bg: '#fff7ed', text: '#c2410c', border: '#fed7aa', icon: '📦' },
+  // Generic
+  '智能': { bg: '#f0fdf4', text: '#166534', border: '#bbf7d0', icon: '🤖' },
+  '市场': { bg: '#fef2f2', text: '#b91c1c', border: '#fecaca', icon: '📢' },
+  '策略': { bg: '#f0f9ff', text: '#0369a1', border: '#bae6fd', icon: '♟️' },
+}
+
+const DEFAULT_TAG_COLOR = { bg: '#f3f4f6', text: '#4b5563', border: '#e5e7eb', icon: '•' }
+
+function getTagColor(tag: string): { bg: string; text: string; border: string; icon: string } {
+  for (const [key, color] of Object.entries(DOMAIN_COLORS)) {
+    if (tag.includes(key)) return color
+  }
+  return DEFAULT_TAG_COLOR
+}
+
+// ─── Skill Tag Component ───────────────────────────────────────────────
+function SkillTag({ label, variant = 'default' }: { label: string; variant?: 'default' | 'featured' | 'hot' }) {
+  const color = getTagColor(label)
+  const variantStyles = {
+    default: { bg: color.bg, text: color.text, border: color.border },
+    featured: { bg: '#fef3c7', text: '#92400e', border: '#fcd34d' },
+    hot: { bg: '#fee2e2', text: '#991b1b', border: '#fca5a5' },
+  }
+  const style = variantStyles[variant]
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-all hover:shadow-sm"
+      style={{ backgroundColor: style.bg, color: style.text, borderColor: style.border }}
+    >
+      <span className="text-[10px] leading-none">{color.icon}</span>
+      {label}
+    </span>
+  )
 }
 
 // ─── Gradients ──────────────────────────────────────────────────────────
@@ -144,7 +215,7 @@ interface ExpertManagerViewProps {
   onSelectExpert: (name: string | null) => void
 }
 
-// ─── Expert Card ────────────────────────────────────────────────────────
+// ─── Expert Card (reference-image style) ─────────────────────────────────
 function ExpertCard({
   expert,
   isActive,
@@ -160,40 +231,44 @@ function ExpertCard({
 }) {
   return (
     <div
-      className="group relative bg-white border rounded-2xl p-5 hover:shadow-md transition-all cursor-pointer flex flex-col gap-3 min-h-[220px]"
-      style={{ borderColor: isActive ? '#3b82f6' : '#e5e7eb' }}
+      className="group relative bg-white rounded-2xl p-5 expert-card-hover cursor-pointer flex flex-col gap-3 border h-full"
+      style={{
+        borderColor: isActive ? 'var(--accent)' : '#e5e7eb',
+        boxShadow: isActive
+          ? '0 0 0 1px var(--accent), 0 4px 12px rgba(0,0,0,0.06)'
+          : '0 1px 3px rgba(0,0,0,0.04)',
+      }}
       onClick={onClick}
     >
-      {/* Active indicator */}
+      {/* Active check */}
       {isActive && (
-        <div className="absolute top-4 right-4 w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center text-white shadow-sm">
+        <div className="absolute top-4 right-4 w-6 h-6 rounded-full flex items-center justify-center text-white shadow-sm"
+          style={{ backgroundColor: 'var(--accent)' }}>
           <CheckSvg />
         </div>
       )}
 
-      {/* Icon + Title */}
+      {/* Avatar + Name */}
       <div className="flex items-start gap-3">
-        <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${gradientOf(expert.name)} flex items-center justify-center shrink-0 shadow-sm`}>
-          <span className="text-xl">{ICON_EMOJIS[expert.icon] || '🧠'}</span>
+        <div
+          className={`w-11 h-11 rounded-full bg-gradient-to-br ${gradientOf(expert.name)} flex items-center justify-center shrink-0 shadow-sm text-lg ring-2 ring-white`}
+        >
+          {ICON_EMOJIS[expert.icon] || '🧠'}
         </div>
         <div className="min-w-0 flex-1 pt-0.5">
-          <h3 className="text-[15px] font-semibold text-gray-900 truncate leading-tight">
+          <h3 className="text-[14px] font-semibold text-gray-900 truncate leading-tight">
             {expert.display_name}
           </h3>
-          <div className="text-[11px] text-gray-400 font-mono mt-0.5">{expert.name}</div>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span className="text-[11px] text-gray-500 truncate">{expert.name}</span>
+            {expert.team && expert.team !== '玄机团队' && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span className="text-[11px] text-gray-400 truncate">{expert.team}</span>
+              </>
+            )}
+          </div>
         </div>
-      </div>
-
-      {/* Tags */}
-      <div className="flex flex-wrap gap-1.5">
-        {(expert.tags || []).slice(0, 3).map((tag: string) => (
-          <span
-            key={tag}
-            className="px-2 py-0.5 rounded-full text-[11px] bg-gray-100 text-gray-600 border border-gray-200"
-          >
-            {tag}
-          </span>
-        ))}
       </div>
 
       {/* Description */}
@@ -201,26 +276,32 @@ function ExpertCard({
         {expert.description || '暂无描述'}
       </p>
 
-      {/* Footer: Team + Members + Usage */}
-      <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[11px] text-gray-400 truncate">{expert.team || '玄机团队'}</span>
-          <MemberDots name={expert.name} />
-        </div>
-        <span className="text-[11px] text-gray-500 shrink-0">
-          {formatUsage(expert.usage_count)}
-        </span>
+      {/* Skill tags */}
+      <div className="flex flex-wrap gap-1.5 mt-auto">
+        {(expert.tags || []).slice(0, 3).map((tag: string) => (
+          <SkillTag key={tag} label={tag} />
+        ))}
       </div>
 
-      {/* Featured "召唤" button (shown on first card when no expert selected) */}
-      {isFeatured && !isActive && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onSelect() }}
-          className="absolute bottom-5 right-5 px-4 py-1.5 rounded-full bg-gray-900 text-white text-[12px] font-medium hover:bg-gray-800 shadow-sm transition-all"
-        >
-          召唤
-        </button>
-      )}
+      {/* Footer: usage count + action button */}
+      <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+        <span className="text-[11px] text-gray-400">
+          {expert.usage_count ? formatUsage(expert.usage_count) : ''}
+        </span>
+        {isFeatured && !isActive ? (
+          <button
+            onClick={(e) => { e.stopPropagation(); onSelect() }}
+            className="px-4 py-1.5 rounded-full bg-gray-900 text-white text-[12px] font-medium hover:bg-gray-800 shadow-sm transition-all active:scale-95"
+          >
+            召唤
+          </button>
+        ) : isActive ? (
+          <span className="px-3 py-1 rounded-full text-[11px] font-medium"
+            style={{ backgroundColor: 'var(--accent-light)', color: 'var(--accent-text)' }}>
+            使用中
+          </span>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -277,8 +358,8 @@ function DetailDrawer({
   if (!expert) return null
   return (
     <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-black/30" onClick={onClose} />
-      <aside className="w-full max-w-[480px] h-full bg-white shadow-2xl flex flex-col">
+      <div className="flex-1 bg-black/30 animate-fade-in" onClick={onClose} />
+      <aside className="w-full max-w-[480px] h-full bg-white shadow-2xl flex flex-col animate-slide-in">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200/70">
           <div className="flex items-center gap-3 min-w-0">
@@ -305,7 +386,7 @@ function DetailDrawer({
           <section>
             <div className="flex flex-wrap gap-1.5">
               {(expert.tags || []).map((tag: string) => (
-                <span key={tag} className="px-2.5 py-1 rounded-full text-[11px] bg-gray-100 text-gray-700 border border-gray-200">{tag}</span>
+                <SkillTag key={tag} label={tag} />
               ))}
             </div>
           </section>
@@ -320,7 +401,7 @@ function DetailDrawer({
             {expert.skills.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
                 {expert.skills.map((s: string) => (
-                  <span key={s} className="px-2 py-0.5 rounded text-[11px] bg-blue-50 text-blue-700 border border-blue-200">{s}</span>
+                  <SkillTag key={s} label={s} variant="featured" />
                 ))}
               </div>
             ) : (
@@ -511,19 +592,23 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 // ─── Skeleton ───────────────────────────────────────────────────────────
 function GridSkeleton() {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="bg-white border border-gray-200 rounded-2xl p-5 animate-pulse min-h-[220px]">
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="bg-white border border-gray-200 rounded-2xl p-5" style={{ animationDelay: `${i * 60}ms` }}>
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-gray-100" />
-            <div className="w-28 h-5 rounded bg-gray-100" />
+            <div className="w-11 h-11 rounded-full skeleton-shimmer" />
+            <div className="flex-1 space-y-1.5">
+              <div className="w-28 h-4 skeleton-shimmer rounded" />
+              <div className="w-20 h-3 skeleton-shimmer rounded" />
+            </div>
           </div>
-          <div className="flex gap-2 mt-3">
-            <div className="w-16 h-5 rounded-full bg-gray-100" />
-            <div className="w-20 h-5 rounded-full bg-gray-100" />
+          <div className="h-4 skeleton-shimmer mt-4 w-full rounded" />
+          <div className="h-4 skeleton-shimmer mt-1.5 w-3/4 rounded" />
+          <div className="flex gap-2 mt-4">
+            <div className="w-16 h-5 rounded-full skeleton-shimmer" />
+            <div className="w-20 h-5 rounded-full skeleton-shimmer" />
+            <div className="w-14 h-5 rounded-full skeleton-shimmer" />
           </div>
-          <div className="h-4 bg-gray-100 rounded mt-3 w-full" />
-          <div className="h-4 bg-gray-100 rounded mt-1.5 w-3/4" />
         </div>
       ))}
     </div>
@@ -665,16 +750,17 @@ export function ExpertManagerView({ authToken, activeExpert, onSelectExpert }: E
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {filtered.map((e, idx) => (
-                <ExpertCard
-                  key={e.name}
-                  expert={e}
-                  isActive={activeExpert === e.name}
-                  isFeatured={activeExpert !== e.name}
-                  onSelect={() => onSelectExpert(activeExpert === e.name ? null : e.name)}
-                  onClick={() => setDetail(e)}
-                />
+                <div key={e.name} className="animate-fade-in" style={{ animationDelay: `${idx * 40}ms` }}>
+                  <ExpertCard
+                    expert={e}
+                    isActive={activeExpert === e.name}
+                    isFeatured={activeExpert !== e.name}
+                    onSelect={() => onSelectExpert(activeExpert === e.name ? null : e.name)}
+                    onClick={() => setDetail(e)}
+                  />
+                </div>
               ))}
             </div>
             {filtered.length > 4 && (

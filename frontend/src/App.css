@@ -92,6 +92,52 @@ html, body, #root {
   margin-bottom: 4px;
 }
 
+/* ── Table row hover highlight ─────────────────────────────────── */
+.md-table-wrap table tbody tr {
+  transition: background-color 0.15s ease;
+}
+.md-table-wrap table tbody tr:hover {
+  background-color: rgba(0, 0, 0, 0.025);
+}
+html.dark .md-table-wrap table tbody tr:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+/* Alternating row colors for better readability */
+.md-table-wrap table tbody tr:nth-child(even) {
+  background-color: var(--bg-secondary);
+}
+.md-table-wrap table tbody tr:nth-child(even):hover {
+  background-color: rgba(0, 0, 0, 0.025);
+}
+html.dark .md-table-wrap table tbody tr:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.015);
+}
+
+/* ── Heading typography refinements ────────────────────────────── */
+.md-h2 {
+  position: relative;
+}
+.md-h3 {
+  flex-wrap: wrap;
+}
+
+/* ── AI message bubble accent left bar ─────────────────────────── */
+.msg-bubble-ai {
+  position: relative;
+  border-left: 3px solid var(--accent);
+}
+.msg-bubble-ai::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(to bottom, var(--accent), transparent);
+}
+
 /* ══════════════════════════════════════════════════════════════════
    THEME SYSTEM — CSS custom properties
    ══════════════════════════════════════════════════════════════════ */
@@ -271,6 +317,64 @@ html.theme-morandi-night {
   --accent: #b0a090;
   --accent-light: rgba(176,160,144,0.15);
   --accent-text: #c8b8a8;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   PAGE TRANSITION & LOADING ANIMATIONS
+   ══════════════════════════════════════════════════════════════════ */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s ease-out both;
+}
+
+.animate-slide-in {
+  animation: slideInRight 0.2s ease-out both;
+}
+
+/* Smooth skeleton shimmer for loading states */
+.skeleton-shimmer {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite ease-in-out;
+  border-radius: 6px;
+}
+
+html.dark .skeleton-shimmer {
+  background: linear-gradient(90deg, #2a2a4a 25%, #35355a 50%, #2a2a4a 75%);
+  background-size: 200% 100%;
+}
+
+/* Smooth view transitions */
+.view-enter {
+  animation: fadeIn 0.2s ease-out both;
+}
+
+/* Smooth sidebar item transitions */
+.sidebar-item {
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+/* Smooth card hover */
+.expert-card-hover {
+  transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+}
+.expert-card-hover:hover {
+  transform: translateY(-1px);
 }
 
 /* ══════════════════════════════════════════════════════════════════

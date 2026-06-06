@@ -8,6 +8,13 @@ import os
 import signal
 from pathlib import Path
 
+# ── Fix CrewAI storage path consistency ───────────────────────────────────
+# CrewAI's db_storage_path() uses Path.cwd().name which varies across threads
+# (ThreadPoolExecutor sub-threads may have different CWD). Set CREWAI_STORAGE_DIR
+# explicitly so all threads compute the same storage path.
+if "CREWAI_STORAGE_DIR" not in os.environ:
+    os.environ["CREWAI_STORAGE_DIR"] = Path(__file__).resolve().parent.parent.name
+
 from xiaopaw.config.safety import assert_all_production_safe
 from xiaopaw.config.validator import load_config
 from xiaopaw.observability.logging_config import setup_logging
@@ -29,6 +36,22 @@ async def main() -> None:
     )
 
     assert_all_production_safe(cfg, is_dev=is_dev)
+
+    # Pre-warm CrewAI storage directory to prevent "unable to open database file"
+    # in sub-threads (ThreadPoolExecutor) where CWD may differ.
+    try:
+        from crewai_core.paths import db_storage_path
+        crewai_db_dir = Path(db_storage_path())
+        crewai_db_dir.mkdir(parents=True, exist_ok=True)
+        # Touch the DB file to ensure it's creatable
+        db_file = crewai_db_dir / "latest_kickoff_task_outputs.db"
+        if not db_file.exists():
+            import sqlite3
+            with sqlite3.connect(str(db_file), timeout=5) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+            logger.info("CrewAI storage pre-warmed: %s", crewai_db_dir)
+    except Exception as e:
+        logger.warning("CrewAI storage pre-warm failed (non-fatal): %s", e)
 
     # Import after logging is configured
     from xiaopaw.agents.main_crew import build_agent_fn
