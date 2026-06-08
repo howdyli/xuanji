@@ -1,0 +1,24 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: main
+exported_at: "2026-06-04T22:24:34Z"
+modules:
+    xiaopaw_backend/agents:
+        dir_name: 多智能体编排与执行引擎
+        title: 多智能体编排与执行引擎
+        scope:
+            - xiaopaw/agents/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    xiaopaw_backend/feishu:
+        dir_name: 飞书消息收发与会话路由
+        title: 飞书消息收发与会话路由
+        scope:
+            - xiaopaw/feishu/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []

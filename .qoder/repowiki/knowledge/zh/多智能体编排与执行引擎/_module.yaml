@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: xiaopaw_backend/agents
+title: 多智能体编排与执行引擎
+scope:
+    - xiaopaw/agents/
+source_files: []
+depends_on: []
+related_to: []

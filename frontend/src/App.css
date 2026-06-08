@@ -12,10 +12,52 @@
 html, body, #root {
   height: 100%;
   width: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-family: 'Plus Jakarta Sans', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* ── Dashboard Design Tokens ──────────────────────────────────────── */
+:root {
+  --d-p-50:#EFF6FF;  --d-p-100:#DBEAFE;  --d-p-200:#BFDBFE;  --d-p-300:#93C5FD;
+  --d-p-400:#60A5FA;  --d-p-500:#3B82F6;  --d-p-600:#2563EB;  --d-p-700:#1D4ED8;
+  --d-p-800:#1E40AF;  --d-p-900:#1E3A8A;
+
+  --d-n-50:#F8FAFC;  --d-n-100:#F1F5F9;  --d-n-200:#E2E8F0;  --d-n-300:#CBD5E1;
+  --d-n-400:#94A3B8;  --d-n-500:#64748B;  --d-n-600:#475569;  --d-n-700:#334155;
+  --d-n-800:#1E293B;  --d-n-900:#0F172A;
+
+  --d-green:#10B981;  --d-green-bg:#ECFDF5;
+  --d-amber:#F59E0B;  --d-amber-bg:#FFFBEB;
+  --d-red:#EF4444;    --d-red-bg:#FEF2F2;
+  --d-purple:#8B5CF6; --d-purple-bg:#F5F3FF;
+  --d-cyan:#06B6D4;   --d-cyan-bg:#ECFEFF;
+
+  --d-font:'Plus Jakarta Sans','Noto Sans SC',system-ui,-apple-system,sans-serif;
+  --d-r-sm:6px;  --d-r-md:10px; --d-r-lg:14px;  --d-r-xl:20px;
+  --d-sh-sm:0 1px 2px 0 rgb(15 23 42/0.04);
+  --d-sh-md:0 4px 12px -2px rgb(15 23 42/0.08);
+  --d-sh-lg:0 12px 32px -4px rgb(15 23 42/0.12);
+  --d-ease:cubic-bezier(0.25,1,0.5,1);
+  --d-t-fast:140ms var(--d-ease);
+  --d-t-mid:240ms var(--d-ease);
+}
+
+/* ── Dashboard scrollbar ─────────────────────────────────────────── */
+.d-scroll::-webkit-scrollbar{width:5px}
+.d-scroll::-webkit-scrollbar-track{background:transparent}
+.d-scroll::-webkit-scrollbar-thumb{background:var(--d-n-300);border-radius:10px}
+.d-scroll::-webkit-scrollbar-thumb:hover{background:var(--d-n-400)}
+
+/* ── Dashboard fadeUp animation ──────────────────────────────────── */
+@media(prefers-reduced-motion:no-preference){
+  @keyframes dFadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+  .d-fade-up{animation:dFadeUp .4s var(--d-ease) both}
+}
+
+/* ── Nav active indicator ─────────────────────────────────────────── */
+.d-nav-active{position:relative;background:var(--d-p-50);color:var(--d-p-700);font-weight:600}
+.d-nav-active::before{content:'';position:absolute;left:0;top:6px;bottom:6px;width:3px;background:var(--d-p-500);border-radius:0 3px 3px 0}
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
