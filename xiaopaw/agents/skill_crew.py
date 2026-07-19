@@ -117,8 +117,20 @@ def build_skill_crew(
     #   qwen-*     → region="cn"/"intl"/"finance" → dashscope.aliyuncs.com，认证用 DASHSCOPE/QWEN key
     # 历史 bug：硬编码 region="cn" 导致 DeepSeek key 被发给 DashScope，401 invalid_api_key。
     # 与主 crew (main_crew.py) 的写法保持一致：根据 model 前缀选 region。
-    region = "deepseek" if sub_agent_model.lower().startswith("deepseek") else "cn"
-    skill_llm = AliyunLLM(model=sub_agent_model, region=region, temperature=0.3)
+    #
+    # ✅ P2-1: 使用 ModelRouter 自动选择最优模型（支持多模型路由 + 故障转移）
+    from xiaopaw.llm.model_router import model_router as _skill_model_router
+
+    # 优先使用 ModelRouter 路由（如果已初始化且有配置），否则回退到原始逻辑
+    if _skill_model_router._models:
+        skill_llm = _skill_model_router.get_llm(
+            task_type="skill_execution",
+            skill_name=skill_name,
+            model_name=sub_agent_model if sub_agent_model != "deepseek-chat" else None,
+        )
+    else:
+        region = "deepseek" if sub_agent_model.lower().startswith("deepseek") else "cn"
+        skill_llm = AliyunLLM(model=sub_agent_model, region=region, temperature=0.3)
 
     session_dir = f"/workspace/sessions/{session_id}" if session_id else "/workspace"
 

@@ -15,15 +15,25 @@ EventBus 是"业务事件分发层"的事件体系（agent_started / token_strea
 两者互补：HookRegistry 管安全，EventBus 管业务。
 
 【事件类型】
-    AGENT_STARTED     : Agent 开始处理消息
-    AGENT_STREAMING   : Agent 正在流式输出
-    AGENT_COMPLETE    : Agent 处理完成
-    AGENT_ERROR       : Agent 处理出错
-    TOOL_CALL_START   : 工具调用开始
-    TOOL_CALL_RESULT  : 工具调用结果
-    SESSION_CREATED   : 新会话创建
-    TITLE_UPDATED     : 会话标题更新
-    THINKING          : Agent 思考中（展示思考指示器）
+    AgentEvent:
+        AGENT_STARTED     : Agent 开始处理消息
+        AGENT_STREAMING   : Agent 正在流式输出
+        AGENT_COMPLETE    : Agent 处理完成
+        AGENT_ERROR       : Agent 处理出错
+        TOOL_CALL_START   : 工具调用开始
+        TOOL_CALL_RESULT  : 工具调用结果
+        SESSION_CREATED   : 新会话创建
+        TITLE_UPDATED     : 会话标题更新
+        THINKING          : Agent 思考中（展示思考指示器）
+
+    CommunityEvent:
+        SKILL_PUBLISHED   : 技能发布到社区
+        SKILL_APPROVED    : 技能审核通过
+        SKILL_INSTALLED   : 技能被安装
+        SKILL_REVIEWED    : 技能被评价
+        SKILL_FEATURED    : 技能被推荐/精选
+        SKILL_SUSPENDED   : 技能被暂停/下架
+        RANKING_UPDATED   : 排行榜更新
 """
 
 from __future__ import annotations
@@ -55,11 +65,23 @@ class AgentEvent(str, Enum):
     THINKING = "thinking"
 
 
+class CommunityEvent(str, Enum):
+    """社区事件类型 —— 技能市场与社区运营相关事件。"""
+
+    SKILL_PUBLISHED = "community.skill_published"
+    SKILL_APPROVED = "community.skill_approved"
+    SKILL_INSTALLED = "community.skill_installed"
+    SKILL_REVIEWED = "community.skill_reviewed"
+    SKILL_FEATURED = "community.skill_featured"
+    SKILL_SUSPENDED = "community.skill_suspended"
+    RANKING_UPDATED = "community.ranking_updated"
+
+
 @dataclass(frozen=True)
 class EventPayload:
     """事件载荷 —— 不可变，订阅者只能读。"""
 
-    event: AgentEvent
+    event: AgentEvent | CommunityEvent
     session_id: str = ""
     routing_key: str = ""
     timestamp: str = field(
@@ -105,7 +127,7 @@ class EventBus:
 
     def subscribe(
         self,
-        event: AgentEvent | str,
+        event: AgentEvent | CommunityEvent | str,
         handler: EventHandler,
         session_id: str | None = None,
     ) -> Callable[[], None]:
@@ -119,7 +141,7 @@ class EventBus:
         Returns:
             取消订阅的函数（调用后移除该 handler）
         """
-        key = event.value if isinstance(event, AgentEvent) else str(event)
+        key = event.value if isinstance(event, (AgentEvent, CommunityEvent)) else str(event)
         self._handlers[key].append((handler, session_id))
         self._handler_count += 1
 
@@ -189,11 +211,11 @@ class EventBus:
         if event_key != "*":
             yield from self._handlers.get("*", [])
 
-    def subscriber_count(self, event: AgentEvent | str | None = None) -> int:
+    def subscriber_count(self, event: AgentEvent | CommunityEvent | str | None = None) -> int:
         """返回订阅者数量。"""
         if event is None:
             return self._handler_count
-        key = event.value if isinstance(event, AgentEvent) else str(event)
+        key = event.value if isinstance(event, (AgentEvent, CommunityEvent)) else str(event)
         return len(self._handlers.get(key, []))
 
     def clear(self) -> None:
@@ -213,7 +235,7 @@ class EventBus:
 # ---- 便捷工厂函数 ----
 
 def create_event_payload(
-    event: AgentEvent,
+    event: AgentEvent | CommunityEvent,
     session_id: str = "",
     routing_key: str = "",
     **data: Any,

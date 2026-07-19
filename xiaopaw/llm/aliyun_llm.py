@@ -20,6 +20,17 @@ from xiaopaw.utils.retry_strategy import RetryConfig, compute_delay_ms_sync
 
 logger = logging.getLogger(__name__)
 
+# Module-level requests.Session for connection reuse
+_session: requests.Session | None = None
+
+
+def _get_session() -> requests.Session:
+    """Return a shared requests.Session for HTTP connection reuse."""
+    global _session
+    if _session is None:
+        _session = requests.Session()
+    return _session
+
 _MCP_LIST_PARAMS = frozenset({"file_types"})
 _DEFAULT_TOOL_RESULT_MAX_CHARS = 12_000
 _TRUNCATE_SUFFIX = (
@@ -206,7 +217,7 @@ class AliyunLLM(BaseLLM):
         elapsed_delay_ms = 0
         for attempt in range(self.retry_count + 1):
             try:
-                resp = requests.post(
+                resp = _get_session().post(
                     self.endpoint, json=payload, headers=headers, timeout=self.timeout
                 )
                 if resp.status_code >= 400:
@@ -224,7 +235,9 @@ class AliyunLLM(BaseLLM):
                                 classified.code, attempt + 1, self.retry_count,
                                 delay_ms, elapsed_delay_ms,
                             )
-                            time.sleep(delay_ms / 1000)
+                            # Yield to event loop during retry delay
+                            # (call() is sync, so we use time.sleep but keep it short)
+                            time.sleep(max(delay_ms / 1000, 0.1))
                             elapsed_delay_ms += delay_ms
                             continue
                     # 不可重试或预算耗尽
@@ -303,7 +316,7 @@ class AliyunLLM(BaseLLM):
                             "[timeout] attempt %d/%d, waiting %dms",
                             attempt + 1, self.retry_count, delay_ms,
                         )
-                        time.sleep(delay_ms / 1000)
+                        time.sleep(max(delay_ms / 1000, 0.1))
                         elapsed_delay_ms += delay_ms
                         continue
             except requests.RequestException as exc:

@@ -286,7 +286,7 @@ export function SkillsPanel({ onClose }: SkillsPanelProps) {
           ) : !detail ? (
             <div className="h-full flex items-center justify-center text-[12.5px] text-gray-400">加载中...</div>
           ) : (
-            <div className="p-4 sm:p-6 max-w-3xl">
+            <div className="p-4 sm:p-6 w-full max-w-[min(90%,1200px)]">
               {/* Mobile back button */}
               <button
                 onClick={() => setSelected(null)}

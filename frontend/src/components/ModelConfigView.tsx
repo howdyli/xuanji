@@ -168,18 +168,18 @@ export function ModelConfigView({ authToken }: ModelConfigViewProps) {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto bg-[var(--bg-primary)] p-6 space-y-6">
+    <div className="flex-1 overflow-y-auto bg-[var(--bg-primary)] p-6 lg:p-8 space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-[20px] font-semibold t-text-primary">模型配置</h1>
-          <p className="text-[13px] t-text-secondary mt-1 max-w-lg">
+          <p className="text-[13px] t-text-secondary mt-1 max-w-[min(90%,600px)]">
             管理 AI 供应商连接，配置 API Key 和可用模型。
           </p>
         </div>
         <button
           onClick={() => setShowAddDialog(true)}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gray-900 text-white text-[13px] font-medium hover:bg-gray-800 transition-colors dark:bg-[var(--accent)] dark:hover:opacity-90"
+          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gray-900 text-white text-[13px] font-medium hover:bg-gray-800 transition-colors dark:bg-[#4F6EF7] dark:hover:opacity-90"
         >
           <PlusIcon />
           <span>添加配置</span>
@@ -572,7 +572,7 @@ function AddChannelDialog({
           <button
             onClick={handleSave}
             disabled={saving}
-            className="px-5 py-2 rounded-lg bg-gray-900 text-white text-[13px] font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors dark:bg-[var(--accent)] dark:hover:opacity-90"
+            className="px-5 py-2 rounded-lg bg-gray-900 text-white text-[13px] font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors dark:bg-[#4F6EF7] dark:hover:opacity-90"
           >
             {saving ? '保存中...' : '添加'}
           </button>

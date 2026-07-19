@@ -1,0 +1,83 @@
+2026-07-01 21:27:29,045 [INFO] xiaopaw.memory.token_counter: token_counter: using rough estimation (len // 2)
+
+=========================================================
+         XiaoPaw v2 Performance Benchmark Results      
+=========================================================
+  Iterations: 50 | Timestamp: 2026-07-01 21:27:29
+
+═══════════════════════════════════════════════════════
+       [1] File I/O Performance (sync vs async)        
+═══════════════════════════════════════════════════════
+
+  Running synchronous I/O test...
+
+  📊 sync_io:
+     Iterations: 50 | Success: 50 | Errors: 0
+     Avg: 0.0002s | Min: 0.0002s | Max: 0.0005s
+     Std Dev: 0.0001s | P95: 0.0004s
+
+  Running asynchronous I/O test...
+
+  📊 async_io:
+     Iterations: 50 | Success: 50 | Errors: 0
+     Avg: 0.0003s | Min: 0.0003s | Max: 0.0007s
+     Std Dev: 0.0001s | P95: 0.0005s
+
+  ❌ Comparison (sync_io → async_io):
+     Speed improvement: -52.3%
+     Throughput: 0.66x faster
+
+═══════════════════════════════════════════════════════
+         [2] Token Count & Caching Performance         
+═══════════════════════════════════════════════════════
+
+  Running token count WITHOUT cache...
+
+  📊 token_no_cache:
+     Iterations: 50 | Success: 50 | Errors: 0
+     Avg: 0.0000s | Min: 0.0000s | Max: 0.0001s
+     Std Dev: 0.0000s | P95: 0.0000s
+
+  Running token count WITH cache...
+
+  📊 token_cached:
+     Iterations: 50 | Success: 50 | Errors: 0
+     Avg: 0.0000s | Min: 0.0000s | Max: 0.0000s
+     Std Dev: 0.0000s | P95: 0.0000s
+     Cache Hit Rate: 0.0% | Hits: 0 | Misses: 50
+
+  ✅ Comparison (token_no_cache → token_cached):
+     Speed improvement: +2.2%
+     Throughput: 1.02x faster
+
+  Running LRU cache operations...
+
+  📊 lru_cache_operations:
+     Iterations: 50 | Success: 50 | Errors: 0
+     Avg: 0.0000s | Min: 0.0000s | Max: 0.0000s
+     Std Dev: 0.0000s | P95: 0.0000s
+     Cache Hit Rate: 0.0% | Hits: 0 | Misses: 50
+
+═══════════════════════════════════════════════════════
+                        Summary                        
+═══════════════════════════════════════════════════════
+
+  All tests completed successfully! ✅
+
+Traceback (most recent call last):
+  File "/Users/howdy/work-source/xiaopaw-v2/benchmark.py", line 419, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/howdy/work-source/xiaopaw-v2/benchmark.py", line 412, in main
+    output_file.write_text(json.dumps(results_data, indent=2, ensure_ascii=False))
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/howdy/.workbuddy/binaries/python/versions/3.13.12/lib/python3.13/pathlib/_local.py", line 555, in write_text
+    return PathBase.write_text(self, data, encoding, errors, newline)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/howdy/.workbuddy/binaries/python/versions/3.13.12/lib/python3.13/pathlib/_abc.py", line 651, in write_text
+    with self.open(mode='w', encoding=encoding, errors=errors, newline=newline) as f:
+         ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/howdy/.workbuddy/binaries/python/versions/3.13.12/lib/python3.13/pathlib/_local.py", line 537, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted: '/Users/howdy/work-source/benchmark-results.json'

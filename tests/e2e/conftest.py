@@ -234,8 +234,8 @@ async def _echo_agent_fn(
     session_id: str,
     routing_key: str = "",
     verbose: bool = False,
-) -> str:
-    return f"Echo: {user_message}"
+) -> tuple[str, list[str]]:
+    return f"Echo: {user_message}", []
 
 
 @pytest_asyncio.fixture

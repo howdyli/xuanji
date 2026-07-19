@@ -31,3 +31,6 @@ frontend/build/
 *.tsbuildinfo
 *.png
 !frontend/public/*.png
+
+# Local scratch dir for verification/e2e screenshots (keep repo root clean)
+screenshots/

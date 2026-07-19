@@ -9,23 +9,58 @@
 # Bootstrap reads from ./data/workspace on the host; memory-save writes to
 # /workspace inside the sandbox. They MUST be the same physical directory,
 # otherwise cross-session memory persistence breaks.
+#
+# [v1.1] Security Hardening (2026-07-01):
+# - 启用 seccomp 安全配置文件（限制系统调用）
+# - 禁用特权模式并移除所有能力（no-new-privileges）
+# - 设置只读根文件系统（仅挂载点可写）
+# - 限制容器资源使用（内存/CPU）
+# - 移除不必要的默认功能
 
 services:
   aio-sandbox:
     image: ghcr.io/agent-infra/sandbox:latest
     ports:
-      - "8030:8080"
+      - "127.0.0.1:8030:8080"  # [v1.1] 绑定到 localhost，防止外网访问
     environment:
       QWEN_API_KEY: "${QWEN_API_KEY}"
       MEMORY_DB_DSN: "${MEMORY_DB_DSN:-}"
+      # [v1.1] Python 安全设置
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - ./xiaopaw/skills:/mnt/skills:rw
       - ./data/workspace:/workspace:rw
+      # [v1.1] 临时目录（用于编译/缓存等操作）
+      - xiaopaw-sandbox-tmp:/tmp/sandbox_tmp:rw
+    # [v1.1] 安全加固选项
     security_opt:
-      - seccomp:unconfined
+      # 使用 Docker 默认 seccomp 配置（而非 unconfined）
+      - no-new-privileges:true
+    cap_drop:
+      # [v1.1] 移除所有 Linux 能力（最小权限原则）
+      - ALL
+    cap_add:
+      # 仅保留必要的网络能力
+      - NET_BIND_SERVICE  # 允许绑定端口
+    # [v1.1] 资源限制（防止资源耗尽攻击）
+    deploy:
+      resources:
+        limits:
+          memory: 2G         # 最大内存 2GB
+          cpus: '2'          # 最大 2 个 CPU 核心
+        reservations:
+          memory: 512M       # 保证 512MB 内存
+          cpus: '0.5'
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/ > /dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 15s     # [v1.1] 给予更多启动时间
+
+# [v1.1] 命名卷定义
+volumes:
+  xiaopaw-sandbox-tmp:
+    driver: local

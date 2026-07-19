@@ -2660,7 +2660,9 @@ FORBIDDEN_LOG_FIELDS = {
 # scripts/export_user_data.py
 
 import json
+import hashlib
 import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from xiaopaw.session.manager import SessionManager
 from xiaopaw.memory.indexer import MemoryIndexer
@@ -2731,7 +2733,142 @@ async def export_user_data(routing_key: str, output_dir: Path) -> None:
                             dirs_exist_ok=True)
 
     print(f"[PIPL Export] Data for {routing_key} written to {output_dir}")
+
+# 生成 manifest.json（数据完整性校验）
+manifest = {
+    "routing_key": routing_key,
+    "exported_at": datetime.now(tz=timezone.utc).isoformat(),
+    "version": "2.1",
+    "files": {},
+}
+for f in sorted(output_dir.rglob("*")):
+    if f.is_file():
+        rel = f.relative_to(output_dir)
+        manifest["files"][str(rel)] = {
+            "size": f.stat().st_size,
+            "sha256": hashlib.sha256(f.read_bytes()).hexdigest(),
+        }
+(output_dir / "manifest.json").write_text(
+    json.dumps(manifest, ensure_ascii=False, indent=2)
+)
+
+# 记录导出操作到审计日志（不可删除）
+audit_log_path = Path("./data/logs/pipl_exports.log")
+with audit_log_path.open("a") as audit:
+    audit.write(json.dumps({
+        "event": "pipl_export",
+        "routing_key": routing_key,
+        "output_dir": str(output_dir),
+        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        "file_count": len(manifest["files"]),
+        "total_size_bytes": sum(v["size"] for v in manifest["files"].values()),
+    }) + "\n")
 ```
+
+#### 导出数据范围详细说明（v2.1 补充）
+
+| 数据文件 | 内容说明 | 格式 | PII 类型 | 保留期限 | PIPL 权利 |
+|---------|---------|------|---------|---------|----------|
+| **sessions.json** | Session 历史消息列表（合并 history 文件） | JSON Array | 用户输入文本、飞书 open_id | 180 天后归档冷存储 | 访问权、可携带权 |
+| **ctx/** 目录 | 每个会话的当前上下文快照（system prompt + 最近 N 轮对话压缩） | JSON（per session） | 对话摘要、用户偏好、业务上下文 | 随 session 删除 | 访问权、可携带权 |
+| **memories.json** | pgvector 向量记忆的元数据（文本内容 + 时间戳，不含 embedding 向量本体） | JSON Array | 记忆摘要、关键词 | 365 天后过期清理 | 删除权 |
+| **raw.jsonl** | 该 routing_key 相关的原始审计日志（JSONL 格式，限最近 30 天窗口） | JSONL（每行一条记录） | 完整请求/响应 payload（含 PII 原文） | 30 天滚动窗口 | 访问权、可携带权 |
+| **traces/** 目录 | Langfuse trace 文件（按 trace_id 分桶，含 LLM 调用详情、token 用量、延迟） | JSON（per trace_id） | 输入/输出文本片段、model 名称 | 与 raw.jsonl 一致（30 天） | 访问权 |
+| **workspace/** 目录 | 用户上传的附件文件原始副本（图片 / PDF / 文档等） | 原始二进制 | 文件名可能含 PII（如"张三_简历.pdf"）；文件内容可能含 PII | 随 session 删除或用户主动删除 | 可携带权 |
+| **manifest.json** | 导出完整性校验清单（含每个文件的 SHA-256 checksum + 大小） | JSON | 无 PII（仅元数据） | — | — |
+
+**v2.1 新增字段说明**：
+
+**ctx.json 结构示例**：
+```json
+{
+  "session_id": "sess_abc123",
+  "snapshot_at": "2026-04-19T10:30:00Z",
+  "system_prompt": "你是 XiaoPaw 工作助手...",
+  "conversation_context": [
+    {"role": "user", "content": "帮我查一下昨天的销售数据", "ts": "2026-04-19T10:28:00Z"},
+    {"role": "assistant", "content": "好的，正在查询...", "ts": "2026-04-19T10:29:00Z"}
+  ],
+  "metadata": {
+    "routing_key": "user_open_id_xxx",
+    "skill_used": "data_query",
+    "token_count": 1500
+  }
+}
+```
+
+**raw.jsonl 过滤规则**：
+```python
+# 仅导出与该 routing_key 直接相关的记录
+# 窗口限制：最近 30 天
+CUTOFF_DAYS = 30
+cutoff = datetime.now(tz=timezone.utc) - timedelta(days=CUTOFF_DAYS)
+for line in raw_src:
+    rec = json.loads(line)
+    ts = datetime.fromisoformat(rec.get("timestamp"))
+    if rec.get("routing_key") == routing_key and ts >= cutoff:
+        f_out.write(line)
+```
+
+**traces/ 目录结构**：
+```
+traces/
+├── trace-{trace_id_1}.json      # Langfuse trace 完整记录
+├── trace-{trace_id_2}.json
+└── ...
+```
+每条 trace 包含：
+- `input`：用户原始输入 + system prompt（脱敏后的）
+- `output`：模型输出文本
+- `usage`：token 统计（prompt_tokens / completion_tokens / total_tokens）
+- `latency_ms`：LLM 响应延迟
+- `model_name`：使用的模型标识（如 deepseek-chat）
+
+**workspace/ 附件处理安全注意事项**：
+1. **文件名脱敏**：若原文件名含 PII（如身份证号、手机号），导出时自动重命名为 `{session_id}_{uuid}.{ext}`
+2. **敏感文件类型过滤**：`.exe` / `.sh` / `.bat` / `.ps1` 等可执行文件默认不导出（防止恶意载荷外泄），除非管理员显式指定 `--include_executables`
+3. **大小限制**：单个附件上限 100MB，总附件上限 5GB（防 DoS）
+4. **病毒扫描建议**：导出前可选调用 ClamAV 扫描 workspace 附件
+
+**数据完整性校验机制**：
+
+每次导出生成 `manifest.json`，包含：
+- 每个文件的 SHA-256 校验和
+- 文件大小（bytes）
+- 相对路径
+- 导出时间戳
+
+验证命令：
+```bash
+# 验证导出数据的完整性
+cd <output_dir>
+python3 -c "
+import json, hashlib
+m = json.load(open('manifest.json'))
+for path, info in m['files'].items():
+    h = hashlib.sha256(open(path, 'rb').read()).hexdigest()
+    assert h == info['sha256'], f'{path}: checksum mismatch'
+print('✅ All files verified')
+"
+```
+
+**PIPL 第 45 条合规声明**（v2.1 补充）：
+
+> 本导出接口符合《中华人民共和国个人信息保护法》第四十五条 **数据可携带权** 要求。
+>
+> 数据主体（用户）有权获取其个人信息的副本，并可请求将个人信息转移至指定的处理者。
+>
+> **实现要点**：
+> - 导出格式为结构化 JSON / JSONL（机器可读 + 通用格式），满足"通用格式"要求
+> - 导出范围覆盖系统存储的全部用户相关数据（见上表）
+> - 导出操作需管理员授权执行（当前实现为命令行脚本，未来可扩展至飞书审批流触发）
+> - 导出操作记录审计日志（`pipl_exports.log`），支持事后追溯
+> - 删除接口（`delete_user_data.py`）独立于导出接口，满足删除权的单独行使要求
+>
+> **限制说明**：
+> - embedding 向量本体不导出（仅导出文本元数据），因向量无独立可读性且体积过大
+> - audit log 中其他用户的记录不导出（按 routing_key 过滤，保护第三方隐私）
+> - 系统配置项（API Key、密码哈希等）永不导出
 
 **删除接口**（不可逆操作，需二次确认）
 

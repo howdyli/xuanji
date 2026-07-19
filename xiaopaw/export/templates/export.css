@@ -1,0 +1,146 @@
+/* 玄机 AI 工作台 — PDF 导出样式表 */
+
+/* 页面设置 */
+@page {
+    size: A4;
+    margin: 2cm;
+    @top-center {
+        content: "玄机 AI 工作台";
+        font-size: 9pt;
+        color: #999;
+    }
+    @bottom-center {
+        content: counter(page) " / " counter(pages);
+        font-size: 9pt;
+        color: #999;
+    }
+}
+
+body {
+    font-family: "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei",
+                 "Helvetica Neue", Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.6;
+    color: #333;
+}
+
+/* 标题 */
+h1 {
+    color: #1a1a2e;
+    border-bottom: 2px solid #7C6AF4;
+    padding-bottom: 8px;
+    font-size: 20pt;
+    margin-top: 0;
+}
+
+h2 {
+    color: #16213e;
+    margin-top: 24px;
+    font-size: 14pt;
+}
+
+h3 {
+    color: #16213e;
+    margin-top: 18px;
+    font-size: 12pt;
+}
+
+/* 代码块 */
+pre {
+    background: #f5f5f5;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 12px;
+    overflow-x: auto;
+    font-family: "Consolas", "Monaco", "Menlo", monospace;
+    font-size: 9pt;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+code {
+    font-family: "Consolas", "Monaco", "Menlo", monospace;
+    background: #f0f0f0;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-size: 9pt;
+}
+
+pre code {
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+}
+
+/* 表格 */
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 16px 0;
+}
+
+th, td {
+    border: 1px solid #ddd;
+    padding: 8px 12px;
+    text-align: left;
+}
+
+th {
+    background: #f8f9fa;
+    font-weight: 600;
+}
+
+tr:nth-child(even) {
+    background: #fafafa;
+}
+
+/* 引用块 */
+blockquote {
+    border-left: 4px solid #7C6AF4;
+    margin: 16px 0;
+    padding: 8px 16px;
+    background: #f8f7ff;
+    color: #555;
+}
+
+blockquote p {
+    margin: 4px 0;
+}
+
+/* 分隔线 */
+hr {
+    border: none;
+    border-top: 1px solid #e0e0e0;
+    margin: 24px 0;
+}
+
+/* 链接 */
+a {
+    color: #7C6AF4;
+    text-decoration: none;
+}
+
+/* 图片 */
+img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* 列表 */
+ul, ol {
+    padding-left: 24px;
+}
+
+li {
+    margin-bottom: 4px;
+}
+
+/* 页脚 */
+.footer {
+    text-align: center;
+    color: #999;
+    font-style: italic;
+    margin-top: 32px;
+    font-size: 9pt;
+}

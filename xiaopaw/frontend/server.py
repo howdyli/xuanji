@@ -9,7 +9,11 @@ from typing import Any
 from aiohttp import web
 
 from xiaopaw.frontend.api import register_routes
-from xiaopaw.skills_mgmt.api import register_routes as register_skills_routes
+from xiaopaw.skills_mgmt.api import (
+    register_community_routes,
+    register_routes as register_skills_routes,
+)
+from xiaopaw.skills_mgmt.community import CommunityRegistry
 from xiaopaw.skills_mgmt.market import MarketRegistry, MarketSync
 from xiaopaw.skills_mgmt.packager import DEFAULT_MAX_ARCHIVE_BYTES
 from xiaopaw.skills_mgmt.registry import SkillRegistry
@@ -44,6 +48,10 @@ def create_frontend_app(
     expert_registry: Any = None,
     automation_registry: Any = None,
     channel_manager: Any = None,
+    community_registry: Any = None,
+    export_service: Any = None,
+    search_service: Any = None,
+    activity_recorder: Any = None,
 ) -> web.Application:
     """Create the aiohttp Application serving both API and static files."""
     app = web.Application(client_max_size=max(skills_max_upload_bytes, 5 * 1024 * 1024) + 1024 * 1024)
@@ -63,10 +71,20 @@ def create_frontend_app(
     app["expert_registry"] = expert_registry
     app["automation_registry"] = automation_registry
     app["channel_manager"] = channel_manager
+    app["community_registry"] = community_registry
+    app["export_service"] = export_service
+    app["search_service"] = search_service
+    app["activity_recorder"] = activity_recorder
 
     # Register REST API routes
     register_routes(app)
     register_skills_routes(app)
+
+    # Community market routes (publish / review / favorite / install)
+    if community_registry is not None:
+        register_community_routes(app, community_registry)
+    else:
+        logger.info("frontend: community_registry not provided, skipping community routes")
 
     # Serve built frontend static files
     frontend_dir = _get_frontend_dir()

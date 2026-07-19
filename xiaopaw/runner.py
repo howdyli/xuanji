@@ -11,6 +11,7 @@ import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+from xiaopaw.event_bus import AgentEvent, EventPayload
 from xiaopaw.feishu.session_key import routing_type
 from xiaopaw.hook_framework.crew_adapter import CrewObservabilityAdapter, set_current_adapter
 from xiaopaw.hook_framework.registry import EventType, GuardrailDeny, HookContext, HookRegistry
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 AgentFn = Callable[
     [str, list[MessageEntry], str, str, bool],
-    Awaitable[str],
+    Awaitable[tuple[str, list[str]]],
 ]
 
 _SLASH_COMMANDS = {"/new", "/help", "/status", "/verbose"}
@@ -41,6 +42,7 @@ class Runner:
         max_queue_size: int = 10,
         data_dir: Path | None = None,
         hook_registry: HookRegistry | None = None,
+        event_bus: "EventBus | None" = None,
     ) -> None:
         self._session_mgr = session_mgr
         self._sender = sender
@@ -50,6 +52,14 @@ class Runner:
         self._data_dir = data_dir or Path("data")
 
         self._hook_registry = hook_registry
+        self._event_bus = event_bus
+
+        if self._event_bus is None:
+            logger.warning(
+                "Runner initialized WITHOUT event_bus — "
+                "Agent activity events will NOT be published. "
+                "ActivityRecorder will receive no events."
+            )
 
         self._queues: dict[str, asyncio.Queue[InboundMessage]] = {}
         self._workers: dict[str, asyncio.Task] = {}
@@ -107,6 +117,53 @@ class Runner:
             else:
                 logger.info("worker exited: %s (gen=%d, superseded)", key, gen)
 
+    async def _send_reply(
+        self, key: str, text: str, card_msg_id: str | None = None,
+    ) -> None:
+        """Send reply via card update (preferred) or plain send."""
+        try:
+            if card_msg_id:
+                await self._sender.update_card(card_msg_id, text)
+            else:
+                await self._sender.send(key, text)
+        except Exception:
+            logger.warning(
+                "failed to send reply for %s (card_msg_id=%s)", key, card_msg_id,
+                exc_info=True,
+            )
+
+    async def _send_error_reply(
+        self, key: str, text: str, card_msg_id: str | None = None,
+    ) -> None:
+        """Send error reply via card update or plain text (fallback-safe)."""
+        try:
+            if card_msg_id:
+                await self._sender.update_card(card_msg_id, text)
+            else:
+                await self._sender.send_text(key, text)
+        except Exception:
+            logger.warning(
+                "failed to send error reply for %s (card_msg_id=%s)", key, card_msg_id,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _classify_and_format_error(exc: Exception) -> str:
+        """Classify an exception and return a user-friendly error message."""
+        from xiaopaw.utils.error_classifier import classify_exception
+        classified = classify_exception(exc)
+        exc_str = str(exc)
+        if classified.is_quota_exceeded:
+            return "抱歉，API 余额不足，请联系管理员充值。"
+        if classified.is_rate_limited:
+            return "抱歉，请求过于频繁，请稍后重试。"
+        if classified.is_context_overflow:
+            return "抱歉，对话内容过长，请使用 /new 开启新会话。"
+        if "Database initialization error" in exc_str or "unable to open database file" in exc_str:
+            logger.error("CrewAI storage error — check CREWAI_STORAGE_DIR and disk permissions")
+            return "抱歉，AI 引擎初始化存储失败，请稍后重试或联系管理员。"
+        return "抱歉，处理消息时出现了错误，请稍后重试。"
+
     async def _handle(self, inbound: InboundMessage) -> None:
         token = bind_trace_id(inbound.trace_id)
         start = time.monotonic()
@@ -114,6 +171,8 @@ class Runner:
 
         adapter: CrewObservabilityAdapter | None = None
         card_msg_id: str | None = None
+        session = None
+        used_skills: list[str] = []
         try:
             # Slash command intercept
             cmd = inbound.content.strip().split()[0].lower() if inbound.content.strip() else ""
@@ -125,43 +184,49 @@ class Runner:
             # Get or create session
             session = await self._session_mgr.get_or_create(key)
 
-            # ★ L33 接线点 1：为本次请求创建 Hook adapter（每请求一个，session_id 绑定）
-            # adapter 在本函数内通过 ContextVar 传递给 main_crew、skill_loader、sub-crew
+            # Create Hook adapter (per-request, session_id bound)
             if self._hook_registry:
                 adapter = CrewObservabilityAdapter(
                     registry=self._hook_registry,
                     session_id=session.id,
+                    event_bus=self._event_bus,
+                    turn_id=inbound.msg_id,
                 )
 
-            # Hook: BEFORE_TURN —— 触发 structured_log + langfuse_trace 创建 trace
+            # EventBus: AGENT_STARTED
+            if self._event_bus:
+                logger.debug("[EventBus.Publish] AGENT_STARTED session=%s turn=%s", session.id[:8], inbound.msg_id)
+                self._event_bus.publish(EventPayload(
+                    event=AgentEvent.AGENT_STARTED,
+                    session_id=session.id,
+                    data={"agent_role": "orchestrator", "turn_id": inbound.msg_id},
+                ))
+
+            # Hook: BEFORE_TURN
             if adapter:
                 adapter.on_turn_start(
                     user_message=inbound.content,
                     sender_id=inbound.sender_id,
                 )
 
-            # Load history and build context (with ContextBuilder for sliding window + tool summaries)
+            # Load history (ContextBuilder used for sliding window when >10 turns)
             history = await self._session_mgr.load_history(session.id)
             if len(history) > 10:
-                # 历史较长时使用 ContextBuilder 构建滑动窗口上下文
-                ctx_builder = ContextBuilder(
-                    sessions_dir=self._session_mgr._sessions_dir,
-                )
-                # ContextBuilder 的 build_context_from_history 会在 agent_fn 内部使用
-                # 这里只做预检查，实际构建仍在 agent_fn 中完成
-                pass
+                ContextBuilder(sessions_dir=self._session_mgr._sessions_dir)
 
-            # Send thinking indicator, save card_msg_id for later update
+            # Send thinking indicator
             card_msg_id = await self._sender.send_thinking(key)
 
-            # ★ L33 接线点 2：pre-flight 安全检查
-            # 把整个 Agent 执行包成一个虚拟工具调用 "agent_execution"，
-            # 让 sandbox_guard / permission_gate 对用户原始输入提前过一遍 ——
-            # 否则恶意 prompt 要等到 LLM 决定调真实工具时才会被拦截，浪费 LLM 算力。
-            #
-            # 因为 BEFORE_TOOL_CALL 抛 GuardrailDeny 会被 adapter 的 pending_deny 吞掉
-            # （pending_deny 模式见 crew_adapter），这里手动检查并立即重抛，
-            # 让外层的 except GuardrailDeny 捕获并向用户回复"安全策略拦截"。
+            # EventBus: THINKING
+            if self._event_bus:
+                logger.debug("[EventBus.Publish] THINKING session=%s turn=%s", session.id[:8], inbound.msg_id)
+                self._event_bus.publish(EventPayload(
+                    event=AgentEvent.THINKING,
+                    session_id=session.id,
+                    data={"agent_role": "orchestrator", "turn_id": inbound.msg_id},
+                ))
+
+            # Pre-flight safety check via virtual "agent_execution" tool call
             if adapter:
                 adapter.on_before_tool_call(
                     tool_name="agent_execution",
@@ -172,10 +237,10 @@ class Runner:
                     adapter._pending_deny = None
                     raise pending
 
-            # Run agent (with adapter available via ContextVar for internal crew hooks)
+            # Run agent (with adapter available via ContextVar)
             adapter_token = set_current_adapter(adapter) if adapter else None
             try:
-                reply = await self._agent_fn(
+                reply, used_skills = await self._agent_fn(
                     inbound.content,
                     history,
                     session.id,
@@ -194,11 +259,18 @@ class Runner:
                     tool_result=reply[:500],
                 )
 
-            # Send reply: update the thinking card if available, else send new card
-            if card_msg_id:
-                await self._sender.update_card(card_msg_id, reply)
-            else:
-                await self._sender.send(key, reply)
+            # Send reply
+            await self._send_reply(key, reply, card_msg_id)
+
+            # EventBus: AGENT_COMPLETE
+            if self._event_bus:
+                elapsed_ms = round((time.monotonic() - start) * 1000)
+                logger.debug("[EventBus.Publish] AGENT_COMPLETE session=%s skills=%s duration=%dms", session.id[:8], used_skills, elapsed_ms)
+                self._event_bus.publish(EventPayload(
+                    event=AgentEvent.AGENT_COMPLETE,
+                    session_id=session.id,
+                    data={"agent_role": "orchestrator", "duration_ms": elapsed_ms, "turn_id": inbound.msg_id, "used_skills": used_skills},
+                ))
 
             # Persist conversation
             await self._session_mgr.append(
@@ -229,14 +301,19 @@ class Runner:
                 )
 
         except GuardrailDeny as deny:
-            # ★ L33 接线点 3：兜底捕获 GuardrailDeny —— 友好告知用户而不是 500 错误
-            # GuardrailDeny 的来源有三处：
-            #   1. pre-flight 检查（上面的 raise pending）
-            #   2. main_crew 内部 step_callback / task_callback 重抛
-            #   3. cleanup() 时的 SESSION_END handler
             elapsed = time.monotonic() - start
             logger.warning("guardrail deny for %s: %s", key, deny)
             deny_reply = f"安全策略拦截：{deny.detail or deny.reason_code}"
+
+            # EventBus: AGENT_ERROR for guardrail deny
+            if self._event_bus:
+                _sid = session.id if session else ""
+                logger.debug("[EventBus.Publish] AGENT_ERROR(deny) session=%s reason=%s", _sid[:8] if _sid else "", deny.reason_code)
+                self._event_bus.publish(EventPayload(
+                    event=AgentEvent.AGENT_ERROR,
+                    session_id=_sid,
+                    data={"error": f"guardrail_deny: {deny.reason_code}", "turn_id": inbound.msg_id, "type": "guardrail_deny"},
+                ))
 
             if adapter and self._hook_registry:
                 self._hook_registry.dispatch(
@@ -255,59 +332,29 @@ class Runner:
                         },
                     ),
                 )
+            await self._send_error_reply(key, deny_reply, card_msg_id)
 
-            try:
-                if card_msg_id:
-                    await self._sender.update_card(card_msg_id, deny_reply)
-                else:
-                    await self._sender.send_text(key, deny_reply)
-            except Exception:
-                pass
         except Exception as exc:
             logger.exception("handle error for %s", key)
+            error_reply = self._classify_and_format_error(exc)
+            await self._send_error_reply(key, error_reply, card_msg_id)
 
-            # ---- 部分内容保存（借鉴 Proma）----
-            # 即使 Agent 执行失败，也尝试保存已生成的中间结果
-            partial_content = ""
-            if hasattr(exc, "partial_result"):
-                partial_content = exc.partial_result
+            # EventBus: AGENT_ERROR
+            if self._event_bus:
+                _sid = session.id if session else ""
+                logger.debug("[EventBus.Publish] AGENT_ERROR session=%s error=%s", _sid[:8] if _sid else "", str(exc)[:200])
+                self._event_bus.publish(EventPayload(
+                    event=AgentEvent.AGENT_ERROR,
+                    session_id=_sid,
+                    data={"error": str(exc), "turn_id": inbound.msg_id if inbound else ""},
+                ))
 
-            # 使用 error_classifier 分类错误，提供更友好的错误信息
-            from xiaopaw.utils.error_classifier import classify_exception
-            classified = classify_exception(exc)
-            exc_str = str(exc)
-            if classified.is_quota_exceeded:
-                error_reply = "抱歉，API 余额不足，请联系管理员充值。"
-            elif classified.is_rate_limited:
-                error_reply = "抱歉，请求过于频繁，请稍后重试。"
-            elif classified.is_context_overflow:
-                error_reply = "抱歉，对话内容过长，请使用 /new 开启新会话。"
-            elif "Database initialization error" in exc_str or "unable to open database file" in exc_str:
-                error_reply = "抱歉，AI 引擎初始化存储失败，请稍后重试或联系管理员。"
-                logger.error("CrewAI storage error — check CREWAI_STORAGE_DIR and disk permissions")
-            else:
-                error_reply = "抱歉，处理消息时出现了错误，请稍后重试。"
-
-            try:
-                if card_msg_id:
-                    await self._sender.update_card(card_msg_id, error_reply)
-                else:
-                    await self._sender.send_text(key, error_reply)
-            except Exception:
-                pass
         finally:
-            # ★ L33 接线点 4：finally 触发 SESSION_END
-            # adapter.cleanup() 内部 dispatch SESSION_END → 触发：
-            #   - audit_logger.session_end_handler（写本会话安全摘要）
-            #   - langfuse_trace.flush_and_close（强制 flush，机制五）
-            # 必须在 finally 里 —— 即使 except 分支已经 send 了回复给用户，
-            # 我们仍要保证 Langfuse 数据落盘
+            # SESSION_END cleanup: flush Langfuse data, write audit summary
             if adapter:
                 try:
                     adapter.cleanup()
                 except GuardrailDeny:
-                    # cleanup 也可能抛 deny（pending_deny 重抛），但用户已经收到回复
-                    # 这里的 deny 只用于 audit/log，吞掉即可
                     pass
             bind_trace_id("-")
 

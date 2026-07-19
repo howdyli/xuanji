@@ -233,9 +233,9 @@ function ExpertCard({
     <div
       className="group relative bg-white rounded-2xl p-5 expert-card-hover cursor-pointer flex flex-col gap-3 border h-full"
       style={{
-        borderColor: isActive ? 'var(--accent)' : '#e5e7eb',
+        borderColor: isActive ? '#4F6EF7' : '#e5e7eb',
         boxShadow: isActive
-          ? '0 0 0 1px var(--accent), 0 4px 12px rgba(0,0,0,0.06)'
+          ? '0 0 0 1px #4F6EF7, 0 4px 12px rgba(0,0,0,0.06)'
           : '0 1px 3px rgba(0,0,0,0.04)',
       }}
       onClick={onClick}
@@ -243,7 +243,7 @@ function ExpertCard({
       {/* Active check */}
       {isActive && (
         <div className="absolute top-4 right-4 w-6 h-6 rounded-full flex items-center justify-center text-white shadow-sm"
-          style={{ backgroundColor: 'var(--accent)' }}>
+          style={{ backgroundColor: '#4F6EF7' }}>
           <CheckSvg />
         </div>
       )}
@@ -297,7 +297,7 @@ function ExpertCard({
           </button>
         ) : isActive ? (
           <span className="px-3 py-1 rounded-full text-[11px] font-medium"
-            style={{ backgroundColor: 'var(--accent-light)', color: 'var(--accent-text)' }}>
+            style={{ backgroundColor: 'rgba(79, 110, 247, 0.08)', color: '#4F6EF7' }}>
             使用中
           </span>
         ) : null}

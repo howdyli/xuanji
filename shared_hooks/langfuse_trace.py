@@ -398,15 +398,20 @@ def before_llm_handler(ctx) -> None:
         # and handles Qwen format (no "name" on tool result messages).
         prompt_messages = ctx.metadata.get("prompt_messages", [])
         gen_output = _extract_prev_llm_output(prompt_messages)
-        # Fallback: use closed span names if message-based extraction failed
-        if not gen_output and closed_entries:
-            gen_output = {
+        # Span-based fallback: when closed_entries exist and message-based
+        # extraction didn't find explicit tool_calls, use span stack info.
+        # This handles cases where the assistant message has content but no
+        # tool_calls field (e.g. some LLM providers omit it).
+        if closed_entries:
+            span_output = {
                 "action": "tool_calls",
                 "tools": [
                     {"name": e[1], "input": e[3] if len(e) > 3 else {}}
                     for e in closed_entries
                 ],
             }
+            if not gen_output or "action" not in gen_output:
+                gen_output = span_output
 
         close_kwargs: dict = {"id": prev_gen_id, "end_time": _now()}
         if gen_output:

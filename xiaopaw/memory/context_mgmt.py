@@ -2,11 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
 
 from xiaopaw.memory.token_counter import count_tokens
+
+# ✅ P1 集成：导入性能优化工具（异步版本）
+try:
+    from xiaopaw.utils.performance import (
+        async_load_session_ctx,
+        async_save_session_ctx,
+        async_append_session_raw,
+        perf_monitor,
+    )
+    _PERF_AVAILABLE = True
+except ImportError:
+    _PERF_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -96,3 +109,60 @@ def append_session_raw(session_id: str, messages: list[dict], ctx_dir: Path) -> 
     with raw_path.open("a", encoding="utf-8") as f:
         for msg in messages:
             f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+
+
+# ═══════════════════════════════════════════════════════════════
+# ✅ P1 集成：性能优化 —— 异步版本 + 智能路由
+# ═══════════════════════════════════════════════════════════════
+
+async def load_session_ctx_async(session_id: str, ctx_dir: Path) -> list[dict]:
+    """异步版本（如果 performance 模块可用），否则回退到同步版本。
+
+    使用方式：
+        messages = await load_session_ctx_async("session_123", ctx_dir)
+    """
+    if _PERF_AVAILABLE:
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                return await async_load_session_ctx(session_id, ctx_dir)
+        except RuntimeError:
+            pass
+    # 回退到同步版本
+    with perf_monitor.measure("load_session_ctx") if _PERF_AVAILABLE else nullcontext():
+        return load_session_ctx(session_id, ctx_dir)
+
+
+async def save_session_ctx_async(session_id: str, messages: list[dict], ctx_dir: Path) -> None:
+    """异步版本（原子写入）。"""
+    if _PERF_AVAILABLE:
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                return await async_save_session_ctx(session_id, messages, ctx_dir)
+        except RuntimeError:
+            pass
+    with perf_monitor.measure("save_session_ctx") if _PERF_AVAILABLE else nullcontext():
+        save_session_ctx(session_id, messages, ctx_dir)
+
+
+async def append_session_raw_async(session_id: str, messages: list[dict], ctx_dir: Path) -> None:
+    """异步版本（追加写入 JSONL）。"""
+    if _PERF_AVAILABLE:
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                return await async_append_session_raw(session_id, messages, ctx_dir)
+        except RuntimeError:
+            pass
+    with perf_monitor.measure("append_session_raw") if _PERF_AVAILABLE else nullcontext():
+        append_session_raw(session_id, messages, ctx_dir)
+
+
+class nullcontext:
+    """简易版 contextlib.nullcontext（兼容性）"""
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass

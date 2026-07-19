@@ -48,8 +48,20 @@ async def async_index_turn(
     try:
         content_id = _content_hash(session_id, turn_ts)
 
+        # ✅ P2-1: 优先使用 ModelRouter 选择 memory_indexing 任务模型
+        try:
+            from xiaopaw.llm.model_router import model_router as _indexer_router
+            if _indexer_router._models:
+                # 获取 LLM 实例并提取配置信息
+                llm_instance = _indexer_router.get_llm(task_type="memory_indexing")
+                model_name = getattr(llm_instance, 'model', 'deepseek-chat')
+            else:
+                model_name = "deepseek-chat"
+        except Exception:
+            model_name = "deepseek-chat"
+
         summary_resp = client.chat.completions.create(
-            model="deepseek-chat",
+            model=model_name,
             messages=[
                 {"role": "system", "content": "用一句中文总结以下对话的核心内容，提取关键实体和主题标签。"},
                 {"role": "user", "content": f"用户：{user_message}\n助手：{assistant_reply[:500]}"},

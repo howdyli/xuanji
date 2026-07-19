@@ -29,12 +29,22 @@ CrewAI 自带的 hook 体系（@before_tool_use 装饰器、step_callback、task
   cleanup()         → SESSION_END     （runner finally 触发，flush Langfuse）
 """
 
+import logging
 import os
 import time
 from contextvars import ContextVar
 from typing import Callable
 
+logger = logging.getLogger(__name__)
+
+from typing import TYPE_CHECKING
+
 from .registry import EventType, GuardrailDeny, HookContext, HookRegistry
+
+if TYPE_CHECKING:
+    from xiaopaw.event_bus import EventBus
+
+from xiaopaw.event_bus import AgentEvent, EventPayload
 
 # ContextVar 让 adapter 在子线程（Sub-Crew）里也能被找到——
 # Python 的 copy_context() 会把当前线程的 ContextVar 复制给子线程，
@@ -75,9 +85,11 @@ class CrewObservabilityAdapter:
     - _tool_start_times：(tool_name, turn) → start_time，用来算工具耗时
     """
 
-    def __init__(self, registry: HookRegistry, session_id: str = ""):
+    def __init__(self, registry: HookRegistry, session_id: str = "", event_bus: "EventBus | None" = None, turn_id: str = ""):
         self._registry = registry
         self._session_id = session_id
+        self._event_bus = event_bus
+        self._turn_id = turn_id
         self._turn_count = 0
         self._current_turn_has_llm = False
         self._cleaned = False
@@ -157,7 +169,7 @@ class CrewObservabilityAdapter:
             ),
         )
 
-    def on_before_tool_call(self, tool_name: str, tool_input: dict | None = None):
+    def on_before_tool_call(self, tool_name: str, tool_input: dict | None = None, *, skill_name: str = ""):
         """工具调用前 —— 触发 BEFORE_TOOL_CALL 策略链（dispatch_gate）。
 
         【pending_deny 模式】
@@ -176,6 +188,15 @@ class CrewObservabilityAdapter:
             session_id=self._session_id,
             turn_number=self._turn_count,
         )
+        # EventBus: TOOL_CALL_START
+        if self._event_bus:
+            logger.debug("[EventBus.Publish] TOOL_CALL_START session=%s tool=%s", self._session_id[:8], tool_name)
+            self._event_bus.publish(EventPayload(
+                event=AgentEvent.TOOL_CALL_START,
+                session_id=self._session_id,
+                data={"tool_name": tool_name, "agent_role": self._last_agent_role, "turn_id": self._turn_id, "skill_name": skill_name},
+            ))
+
         try:
             self._registry.dispatch_gate(EventType.BEFORE_TOOL_CALL, ctx)
         except GuardrailDeny as e:
@@ -205,8 +226,17 @@ class CrewObservabilityAdapter:
                 ),
             )
 
+            # EventBus: TOOL_CALL_RESULT for denied tool
+            if self._event_bus:
+                logger.debug("[EventBus.Publish] TOOL_CALL_RESULT(denied) session=%s tool=%s", self._session_id[:8], tool_name)
+                self._event_bus.publish(EventPayload(
+                    event=AgentEvent.TOOL_CALL_RESULT,
+                    session_id=self._session_id,
+                    data={"tool_name": tool_name, "duration_ms": deny_ms, "agent_role": self._last_agent_role, "turn_id": self._turn_id, "denied": True, "skill_name": skill_name},
+                ))
+
     def on_after_tool_call(
-        self, tool_name: str, tool_input: dict | None = None, tool_result: str = ""
+        self, tool_name: str, tool_input: dict | None = None, tool_result: str = "", *, skill_name: str = ""
     ):
         key = (tool_name, self._turn_count)
         start = self._tool_start_times.pop(key, None)
@@ -225,6 +255,15 @@ class CrewObservabilityAdapter:
                 metadata={"tool_output": truncated},
             ),
         )
+
+        # EventBus: TOOL_CALL_RESULT
+        if self._event_bus:
+            logger.debug("[EventBus.Publish] TOOL_CALL_RESULT session=%s tool=%s duration=%dms", self._session_id[:8], tool_name, elapsed_ms)
+            self._event_bus.publish(EventPayload(
+                event=AgentEvent.TOOL_CALL_RESULT,
+                session_id=self._session_id,
+                data={"tool_name": tool_name, "duration_ms": elapsed_ms, "agent_role": self._last_agent_role, "turn_id": self._turn_id, "skill_name": skill_name},
+            ))
 
     def dispatch_after_turn(self, output: str = "") -> None:
         """Public entry for AFTER_TURN, called from step_callback."""

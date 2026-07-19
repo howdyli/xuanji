@@ -87,9 +87,10 @@
 
 **P2 合计**：≈ +140 行
 
-### P3（5 项，推迟 v2.2）
+### P3（5 项，4 项推迟 v2.2，1 项已提前实现）
 
-- P3-1~P3-5 在 10-testing.md 标注 🔄 `推迟 v2.2`（已在 test-cases-for-known-risks.md 提供修复模板）
+- ~~P3-1~~ ✅ **已实现**（2026-07-01）：`tests/integration/fault_inject/test_feishu_429_spike.py` — respx 飞书路由 body matcher 修复
+- P3-2~P3-5 在 10-testing.md 标注 🔄 `推迟 v2.2`（已在 test-cases-for-known-risks.md 提供修复模板）
 
 ### 新增专题（3 份已落盘）
 

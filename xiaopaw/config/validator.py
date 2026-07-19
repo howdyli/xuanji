@@ -2,22 +2,31 @@
 
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from xiaopaw.config.flags import FeatureFlags
 
+# Matches ${VAR} and ${VAR:-default} shell-style placeholders.
+_ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
 
 class FeishuConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     app_id: str = Field(min_length=8)
     app_secret: str = Field(min_length=8)
     allowed_chats: list[str] = Field(default_factory=list)
 
 
 class AgentConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     model: str = "deepseek-v4-flash"
     max_iter: int = Field(default=50, ge=1, le=200)
     max_input_tokens: int = Field(default=30000, ge=1000, le=128000)
@@ -28,11 +37,15 @@ class AgentConfig(BaseModel):
 
 
 class SandboxConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     url: str = "http://localhost:8030/mcp"
     timeout_s: int = Field(default=120, ge=10, le=600)
 
 
 class MemoryConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     db_dsn: str = ""
     hard_limit_lines: int = 250
     max_save_length: int = 2000
@@ -42,22 +55,30 @@ class MemoryConfig(BaseModel):
 
 
 class SessionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     max_active_sessions: int = Field(default=1000, ge=1)
     max_history_turns: int = Field(default=20, ge=1)
 
 
 class RunnerConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     max_queue_size: int = Field(default=10, ge=1, le=100)
     idle_timeout_s: float = Field(default=300.0, ge=10)
 
 
 class SenderConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     max_retries: int = Field(default=3, ge=1, le=10)
     retry_backoff: list[float] = Field(default_factory=lambda: [1.0, 2.0, 4.0])
     max_concurrent: int = Field(default=5, ge=1, le=20)
 
 
 class DebugConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enable_test_api: bool = False
     test_api_host: str = "127.0.0.1"
     test_api_port: int = Field(default=9090, ge=1024, le=65535)
@@ -65,27 +86,41 @@ class DebugConfig(BaseModel):
 
 
 class FrontendConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = True
     host: str = "127.0.0.1"
     port: int = Field(default=8080, ge=1024, le=65535)
 
 
 class ObservabilityConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     metrics_host: str = "0.0.0.0"
-    metrics_port: int = Field(default=8090, ge=1024, le=65535)
     log_json: bool = True
+    langfuse_host: str = "http://localhost:3000"
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    enable_langfuse: bool = True
+    metrics_port: int = Field(default=8090, ge=1024, le=65535)
 
 
 class RateLimitConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     per_user_per_minute: int = Field(default=20, ge=1)
 
 
 class ReplayCacheConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     maxsize: int = Field(default=10000, ge=100)
     ttl_sec: float = Field(default=300.0, ge=10)
 
 
 class CronConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = True
     check_interval_s: float = Field(default=30.0, ge=5)
     filelock_timeout_s: float = Field(default=10.0, ge=1)
@@ -93,6 +128,8 @@ class CronConfig(BaseModel):
 
 
 class CleanupConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = True
     session_ttl_days: int = Field(default=180, ge=1)
     trace_ttl_days: int = Field(default=30, ge=1)
@@ -107,6 +144,8 @@ class SkillsConfig(BaseModel):
     are resolved against the project root).
     max_upload_mb: maximum upload archive size in MB (zip compressed).
     """
+    model_config = ConfigDict(extra="forbid")
+
     user_dir: str = "data/user_skills"
     max_upload_mb: int = Field(default=5, ge=1, le=50)
 
@@ -118,6 +157,8 @@ class SkillMarketConfig(BaseModel):
     and persists into the ``skill_market`` table. URLs are placeholders
     until upstream protocols are confirmed; allow env override for dev.
     """
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = True
     vercel_index_url: str = (
         "https://raw.githubusercontent.com/vercel/skills/main/index.json"
@@ -131,6 +172,8 @@ class SkillMarketConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     workspace: str = "data/workspace"
     data_dir: str = "data"
     feishu: FeishuConfig = Field(default_factory=lambda: FeishuConfig(app_id="placeholder", app_secret="placeholder"))
@@ -150,6 +193,26 @@ class AppConfig(BaseModel):
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     skill_market: SkillMarketConfig = Field(default_factory=SkillMarketConfig)
     feature_flags: FeatureFlags = Field(default_factory=FeatureFlags)
+    routing: dict[str, Any] = Field(default_factory=dict)
+
+
+def _expand_env(value: Any) -> Any:
+    """Recursively expand ${VAR} and ${VAR:-default} placeholders in config values.
+
+    An unset variable with no default resolves to an empty string, matching
+    shell semantics. This ensures placeholders like ``${MEMORY_DB_DSN:-}`` become
+    an empty string (feature disabled) instead of being passed through verbatim.
+    """
+    if isinstance(value, str):
+        def _sub(match: re.Match[str]) -> str:
+            var_name, default = match.group(1), match.group(2)
+            return os.environ.get(var_name, default if default is not None else "")
+        return _ENV_VAR_PATTERN.sub(_sub, value)
+    if isinstance(value, dict):
+        return {k: _expand_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env(v) for v in value]
+    return value
 
 
 def load_config(path: Path) -> AppConfig:
@@ -157,4 +220,5 @@ def load_config(path: Path) -> AppConfig:
     if not path.exists():
         raise FileNotFoundError(f"config file not found: {path}")
     raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw = _expand_env(raw)
     return AppConfig(**raw)

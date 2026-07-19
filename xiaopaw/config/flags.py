@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Literal
 
+from pydantic import BaseModel, ConfigDict
 
-@dataclass(frozen=True)
-class FeatureFlags:
+
+class FeatureFlags(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     token_counter_mode: Literal["hf_deepseek", "rough"] = "rough"
     enable_skill_timeout: bool = True
     enable_cron_filelock: bool = True

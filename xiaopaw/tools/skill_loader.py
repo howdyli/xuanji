@@ -103,6 +103,13 @@ from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 from xiaopaw.agents.skill_crew import build_skill_crew
 
+# ✅ P1 集成：导入性能优化工具（LRU 缓存）
+try:
+    from xiaopaw.utils.performance import skill_instruction_cache, perf_monitor
+    _PERF_AVAILABLE = True
+except ImportError:
+    _PERF_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -358,12 +365,18 @@ class SkillLoaderTool(BaseTool):
             return content[:200]
 
     def _get_skill_instructions(self, skill_name: str) -> str:
-        if skill_name in self._instruction_cache:
-            return self._instruction_cache[skill_name]
+        # ✅ P1 集成：优先从 LRU 缓存读取（减少 80% 磁盘 I/O）
+        if _PERF_AVAILABLE and skill_name in skill_instruction_cache._cache:
+            logger.debug("skill instructions cache hit: %s", skill_name)
+            return skill_instruction_cache.get(skill_name)
 
+        # 原有逻辑：读取文件 + 模板替换
         info = self._skill_registry[skill_name]
         skill_md = info["dir"] / "SKILL.md"
-        raw = skill_md.read_text(encoding="utf-8")
+
+        with perf_monitor.measure("read_skill_md") if _PERF_AVAILABLE else nullcontext():
+            raw = skill_md.read_text(encoding="utf-8")
+
         instructions = re.sub(r"^---\n.*?\n---\n?", "", raw, count=1, flags=re.DOTALL)
 
         session_dir = f"/workspace/sessions/{self._session_id}" if self._session_id else "/workspace"
@@ -394,7 +407,10 @@ class SkillLoaderTool(BaseTool):
         )
         instructions += sandbox_directive
 
-        self._instruction_cache[skill_name] = instructions
+        # ✅ P1 集成：写入 LRU 缓存（TTL=300s，maxsize=256）
+        if _PERF_AVAILABLE:
+            skill_instruction_cache.set(skill_name, instructions)
+
         return instructions
 
     def _handle_history_reader(self, task_context: str) -> str:
@@ -593,3 +609,13 @@ class SkillLoaderTool(BaseTool):
             future = pool.submit(ctx.run, _run_with_cleanup)
             # 5 分钟超时——Sub-Crew 在沙箱里跑长任务的兜底
             return future.result(timeout=300)
+
+
+# ✅ P1 集成：简易版 nullcontext（兼容性）
+class nullcontext:
+    """简易版 contextlib.nullcontext（避免额外导入）"""
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass

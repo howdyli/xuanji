@@ -153,6 +153,21 @@ class UserAuth:
 
         return user_id
 
+    def get_first_user(self) -> dict | None:
+        """Get the first registered user (lowest id)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, username, created_at FROM users ORDER BY id ASC LIMIT 1"
+            ).fetchone()
+        if not row:
+            return None
+        return {"id": row[0], "username": row[1], "created_at": row[2]}
+
+    def get_user_count(self) -> int:
+        """Return total number of registered users."""
+        with self._connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
     def get_user(self, user_id: int) -> dict | None:
         """Get user info by id."""
         with self._connect() as conn:

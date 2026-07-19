@@ -680,7 +680,18 @@ class Runner:
 
 ### 6.4 P2 / P3 测试（pre-merge + nightly）
 
-详见 [`test-cases-for-known-risks.md`](test-cases-for-known-risks.md) 对应章节；所有 P3 项（包括 P3-1 respx body matcher、P3-2 tenacity reraise、P3-3 Runner test helper、P3-4 pytest-memray 平台约束、P3-5 性能 SLO）已在本文 §5 / §13 内联示例。
+详见 [`test-cases-for-known-risks.md`](test-cases-for-known-risks.md) 对应章节；所有 P3 项（包括 **P3-1 ✅ 已实现** respx body matcher、P3-2 tenacity reraise、P3-3 Runner test helper、P3-4 pytest-memray 平台约束、P3-5 性能 SLO）已在本文 §5 / §13 内联示例。
+
+**P3-1 实现状态**（2026-07-01 完成）：
+- ✅ 测试文件：`tests/integration/fault_inject/test_feishu_429_spike.py`（+280 行）
+- ✅ 覆盖 6 个测试用例：
+  - `test_send_message_uses_correct_endpoint_with_body_matching` — 基础 body matcher 验证
+  - `test_feishu_sender_429_backoff_does_not_starve_other_rk` — 429 退避不阻塞其他 rk
+  - `test_consecutive_429s_eventually_succeed_or_raise` — 连续 429 重试逻辑
+  - `test_params_matcher_would_miss_post_body` — 教育性测试（演示 v2.0 bug）
+  - `test_body_matcher_performance_under_high_concurrency` — 高并发性能验证
+- ✅ 核心修复：使用 `side_effect=callback` + `request.content` body 匹配，替代无效的 `params=` 匹配
+- 📖 文档位置：§5.5 "飞书 429"（第 561-606 行）
 
 ---
 

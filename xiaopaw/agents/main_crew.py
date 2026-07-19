@@ -26,6 +26,7 @@ from xiaopaw.hook_framework.crew_adapter import get_current_adapter
 from xiaopaw.agents.models import MainTaskOutput
 from xiaopaw.config.flags import FeatureFlags
 from xiaopaw.llm.aliyun_llm import AliyunLLM
+from xiaopaw.llm.model_router import model_router  # ✅ P2-1: 多模型路由器
 from xiaopaw.memory.bootstrap import build_bootstrap_prompt
 from xiaopaw.memory.context_mgmt import (
     append_session_raw,
@@ -46,7 +47,7 @@ _DEFAULT_MAX_HISTORY_TURNS = 20
 
 AgentFn = Callable[
     [str, list[MessageEntry], str, str, bool],
-    Awaitable[str],
+    Awaitable[tuple[str, list[str]]],
 ]
 
 
@@ -192,7 +193,8 @@ class MemoryAwareCrew:
         return Agent(
             **cfg,
             tools=[skill_tool, IntermediateTool()],
-            llm=AliyunLLM(model="deepseek-chat", region="deepseek", temperature=0.3),
+            # ✅ P2-1: 使用 ModelRouter 自动选择最优模型（支持多模型路由）
+            llm=model_router.get_llm(task_type="orchestrator"),
             verbose=self._verbose,
         )
 
@@ -292,7 +294,7 @@ class MemoryAwareCrew:
         if current_user_msg:
             context.messages.append(current_user_msg)
 
-    async def run_and_index(self) -> str:
+    async def run_and_index(self) -> tuple[str, list[str]]:
         try:
             max_retries = 2
             last_exc: Exception | None = None
@@ -323,8 +325,11 @@ class MemoryAwareCrew:
             append_session_raw(self.session_id, new_msgs, self._ctx_dir)
             save_session_ctx(self.session_id, list(self._last_msgs), self._ctx_dir)
 
+            used_skills: list[str] = []
             try:
                 reply = result.pydantic.reply if result.pydantic else result.raw
+                if result.pydantic and hasattr(result.pydantic, "used_skills"):
+                    used_skills = list(result.pydantic.used_skills or [])
             except Exception:
                 reply = str(result.raw) if result.raw else str(result)
 
@@ -338,7 +343,7 @@ class MemoryAwareCrew:
                     db_dsn=self._db_dsn,
                 )
 
-            return reply
+            return reply, used_skills
         finally:
             try:
                 unregister_before_tool_call_hook(self.before_tool_hook)
@@ -379,13 +384,21 @@ def build_agent_fn(
         session_id: str,
         routing_key: str = "",
         verbose: bool = False,
-    ) -> str:
+    ) -> tuple[str, list[str]]:
+        # 动态定位用户 workspace
+        user_ws = workspace_dir  # 默认全局
+        if routing_key.startswith("p2p:web_"):
+            username = routing_key[len("p2p:web_"):]
+            candidate = workspace_dir / username
+            if candidate.is_dir():
+                user_ws = candidate
+
         crew_instance = MemoryAwareCrew(
             session_id=session_id,
             routing_key=routing_key,
             user_message=user_message,
             sender=sender,
-            workspace_dir=workspace_dir,
+            workspace_dir=user_ws,
             ctx_dir=ctx_dir,
             history_all=history,
             db_dsn=db_dsn,

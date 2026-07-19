@@ -106,7 +106,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
           },
           h2({ children, ...props }) {
             return (
-              <h2 className="md-h2 text-lg font-semibold text-gray-800 mt-5 mb-2 pl-3 border-l-[3px] border-[var(--accent)]" {...props}>
+              <h2 className="md-h2 text-lg font-semibold text-gray-800 mt-5 mb-2 pl-3 border-l-[3px] border-[#4F6EF7]" {...props}>
                 {children}
               </h2>
             )
@@ -119,7 +119,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
               <h3 className="md-h3 text-base font-semibold text-gray-800 mt-4 mb-1.5 flex items-center gap-1.5" {...props}>
                 {numberMatch ? (
                   <>
-                    <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-[var(--accent-light)] text-[var(--accent-text)] text-[13px] font-bold min-w-[2.5em]">
+                    <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-[rgba(79,110,247,0.08)] text-[#4F6EF7] text-[13px] font-bold min-w-[2.5em]">
                       {numberMatch[1]}
                     </span>
                     <span>{numberMatch[2]}</span>
@@ -155,7 +155,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
           },
           ol({ children, ...props }) {
             return (
-              <ol className="mb-2.5 pl-5 space-y-1.5 list-decimal marker:text-[var(--accent-text)] marker:font-semibold" {...props}>
+              <ol className="mb-2.5 pl-5 space-y-1.5 list-decimal marker:text-[#4F6EF7] marker:font-semibold" {...props}>
                 {children}
               </ol>
             )

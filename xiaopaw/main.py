@@ -8,6 +8,9 @@ import os
 import signal
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv(override=True)  # .env 文件优先，确保密钥以文件为准
+
 # ── Fix CrewAI storage path consistency ───────────────────────────────────
 # CrewAI's db_storage_path() uses Path.cwd().name which varies across threads
 # (ThreadPoolExecutor sub-threads may have different CWD). Set CREWAI_STORAGE_DIR
@@ -22,23 +25,28 @@ from xiaopaw.observability.logging_config import setup_logging
 logger = logging.getLogger(__name__)
 
 
-async def main() -> None:
-    config_path = Path(os.environ.get("XIAOPAW_CONFIG", "config.yaml"))
-    cfg = load_config(config_path)
+def _init_model_router() -> None:
+    """Initialize the multi-model router from config.yaml's `routing` section (non-fatal)."""
+    try:
+        from xiaopaw.llm.model_router import model_router
+        import yaml as _yaml
 
-    is_dev = os.environ.get("XIAOPAW_ENV", "dev") == "dev"
-    data_dir = Path(cfg.data_dir)
-    data_dir.mkdir(parents=True, exist_ok=True)
+        routing_config_path = Path("config.yaml")
+        if routing_config_path.exists():
+            with routing_config_path.open("r", encoding="utf-8") as rf:
+                full_cfg = _yaml.safe_load(rf) or {}
+            model_router.init_from_config(full_cfg)
+            logger.info(
+                "ModelRouter initialized: default=%s, models=%d",
+                model_router._default_model,
+                len(model_router._models),
+            )
+    except Exception as exc:
+        logger.warning("ModelRouter init failed (non-fatal, will fallback to hardcoded): %s", exc)
 
-    setup_logging(
-        log_dir=data_dir / "logs",
-        json_output=cfg.observability.log_json,
-    )
 
-    assert_all_production_safe(cfg, is_dev=is_dev)
-
-    # Pre-warm CrewAI storage directory to prevent "unable to open database file"
-    # in sub-threads (ThreadPoolExecutor) where CWD may differ.
+def _prewarm_crewai_storage() -> None:
+    """Pre-create CrewAI storage dir/file so sub-threads (differing CWD) can open the DB."""
     try:
         from crewai_core.paths import db_storage_path
         crewai_db_dir = Path(db_storage_path())
@@ -53,32 +61,22 @@ async def main() -> None:
     except Exception as e:
         logger.warning("CrewAI storage pre-warm failed (non-fatal): %s", e)
 
-    # Import after logging is configured
-    from xiaopaw.agents.main_crew import build_agent_fn
-    from xiaopaw.api.capture_sender import CaptureSender
-    from xiaopaw.cleanup.service import CleanupService
-    from xiaopaw.cron.service import CronService
-    from xiaopaw.hook_framework.loader import HookLoader
-    from xiaopaw.hook_framework.registry import HookRegistry
-    from xiaopaw.observability.metrics_server import start_metrics_server
-    from xiaopaw.observability.security import RateLimiter, ReplayCache
-    from xiaopaw.runner import Runner
-    from xiaopaw.session.manager import SessionManager
 
-    # Frontend PostgreSQL store (optional, gracefully falls back)
-    pg_store = None
-    if cfg.frontend.enabled and cfg.memory.db_dsn:
-        from xiaopaw.frontend.store import PGStore
-        pg_store = PGStore(dsn=cfg.memory.db_dsn)
+def _build_skill_layers(cfg, pg_store, event_bus):
+    """Build skill registry + market + community layers (all gracefully optional).
 
-    # Skill registry (scans builtin + user dirs, syncs metadata to DB if available)
+    Returns a 5-tuple:
+    (skill_registry, user_skills_dir, market_registry, market_sync, community_registry).
+    """
     skill_registry = None
     user_skills_dir: Path | None = None
     market_registry = None
     market_sync = None
+    community_registry = None
     if cfg.frontend.enabled:
         from xiaopaw.skills_mgmt.market import MarketRegistry, MarketSync
         from xiaopaw.skills_mgmt.registry import SkillRegistry
+        from xiaopaw.skills_mgmt.community import CommunityRegistry
         user_skills_dir = Path(cfg.skills.user_dir)
         if not user_skills_dir.is_absolute():
             user_skills_dir = Path(__file__).resolve().parent.parent / cfg.skills.user_dir
@@ -105,52 +103,143 @@ async def main() -> None:
                 market_sync=market_sync,
             )
 
+        # Community layer: requires PG for community skills tables.
+        if cfg.memory.db_dsn and market_registry is not None:
+            community_registry = CommunityRegistry(
+                pg_dsn=cfg.memory.db_dsn,
+                market_registry=market_registry,
+                user_dir=user_skills_dir or Path(cfg.skills.user_dir),
+                event_bus=event_bus,
+            )
+    return skill_registry, user_skills_dir, market_registry, market_sync, community_registry
+
+
+def _init_workspace_files(workspace_dir: Path) -> None:
+    """Seed workspace with template files from workspace-init/ and force sandbox-writable perms.
+
+    Sandbox gem (UID 1000) needs to write workspace files; root-owned 644 blocks
+    memory-save -> LLM "creatively" writes to alternate path -> Skill returns success
+    but Bootstrap never sees it. Force 0o666 on every startup to prevent this trap.
+    """
+    workspace_init_dir = Path(__file__).parent.parent / "workspace-init"
+    if not workspace_init_dir.exists():
+        return
+    import shutil
+    workspace_dir.chmod(0o777)
+    for src in workspace_init_dir.iterdir():
+        if not src.is_file():
+            continue
+        dest = workspace_dir / src.name
+        if not dest.exists():
+            shutil.copy2(src, dest)
+            logger.info("workspace init: copied %s to workspace", src.name)
+    for f in workspace_dir.glob("*.md"):
+        try:
+            f.chmod(0o666)
+        except OSError as e:
+            logger.warning("workspace chmod 666 failed for %s: %s", f.name, e)
+
+
+def _build_sender(cfg, is_dev: bool):
+    """Build the Feishu sender, or a CaptureSender in dev/test-API mode."""
+    if is_dev and cfg.debug.enable_test_api:
+        from xiaopaw.api.capture_sender import CaptureSender
+        return CaptureSender()
+
+    import lark_oapi as lark
+    lark_client = lark.Client.builder() \
+        .app_id(cfg.feishu.app_id) \
+        .app_secret(cfg.feishu.app_secret) \
+        .build()
+    from xiaopaw.feishu.sender import FeishuSender
+    return FeishuSender(
+        client=lark_client,
+        max_retries=cfg.sender.max_retries,
+        retry_backoff=tuple(cfg.sender.retry_backoff),
+        max_concurrent=cfg.sender.max_concurrent,
+    )
+
+
+async def main() -> None:
+    config_path = Path(os.environ.get("XIAOPAW_CONFIG", "config.yaml"))
+    cfg = load_config(config_path)
+
+    # ✅ P2-1: 初始化多模型路由器（从 config.yaml 的 routing 段加载配置）
+    _init_model_router()
+
+    is_dev = os.environ.get("XIAOPAW_ENV", "dev") == "dev"
+    data_dir = Path(cfg.data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    setup_logging(
+        log_dir=data_dir / "logs",
+        json_output=cfg.observability.log_json,
+    )
+
+    assert_all_production_safe(cfg, is_dev=is_dev)
+
+    # Pre-warm CrewAI storage directory to prevent "unable to open database file"
+    # in sub-threads (ThreadPoolExecutor) where CWD may differ.
+    _prewarm_crewai_storage()
+
+    # Import after logging is configured
+    from xiaopaw.agents.main_crew import build_agent_fn
+    from xiaopaw.cleanup.service import CleanupService
+    from xiaopaw.cron.service import CronService
+    from xiaopaw.hook_framework.loader import HookLoader
+    from xiaopaw.hook_framework.registry import HookRegistry
+    from xiaopaw.observability.metrics_server import start_metrics_server
+    from xiaopaw.observability.security import RateLimiter, ReplayCache
+    from xiaopaw.runner import Runner
+    from xiaopaw.session.manager import SessionManager
+    from xiaopaw.export.service import ExportService
+    from xiaopaw.frontend.search_service import SearchService
+    from xiaopaw.event_bus import EventBus
+    from xiaopaw.observability.activity_recorder import ActivityRecorder
+
+    # Frontend PostgreSQL store (optional, gracefully falls back)
+    pg_store = None
+    search_service = None
+    if cfg.frontend.enabled and cfg.memory.db_dsn:
+        from xiaopaw.frontend.store import PGStore
+        pg_store = PGStore(dsn=cfg.memory.db_dsn)
+        search_service = SearchService(pg_dsn=cfg.memory.db_dsn)
+        logger.info("SearchService initialized (pg_dsn=%s...)", cfg.memory.db_dsn[:40])
+
+    # EventBus — 全局事件总线（供 ActivityRecorder 等订阅者使用）
+    event_bus = EventBus()
+
+    # ActivityRecorder — 订阅 EventBus 全局事件，写入内存缓冲区 + PG
+    activity_recorder = ActivityRecorder(pg_store=pg_store)
+    event_bus.subscribe("*", activity_recorder.handle_event)
+    logger.info("ActivityRecorder subscribed to EventBus (pg_store=%s)",
+                "enabled" if pg_store else "disabled")
+
+    # Skill registry + market + community layers (all gracefully optional)
+    (
+        skill_registry,
+        user_skills_dir,
+        market_registry,
+        market_sync,
+        community_registry,
+    ) = _build_skill_layers(cfg, pg_store, event_bus)
+
     session_mgr = SessionManager(
         data_dir=data_dir,
         max_active_sessions=cfg.session.max_active_sessions,
     )
 
+    export_service = ExportService(session_mgr=session_mgr)
+
     workspace_dir = Path(cfg.workspace)
     workspace_dir.mkdir(parents=True, exist_ok=True)
     ctx_dir = data_dir / "ctx"
 
-    # Workspace init: copy template files from workspace-init/ if missing (fresh user).
-    # Sandbox gem (UID 1000) needs to write workspace files; root-owned 644 blocks
-    # memory-save → LLM "creatively" writes to alternate path → Skill returns success
-    # but Bootstrap never sees it. Force 0o666 on every startup to prevent this trap.
-    workspace_init_dir = Path(__file__).parent.parent / "workspace-init"
-    if workspace_init_dir.exists():
-        import shutil
-        workspace_dir.chmod(0o777)
-        for src in workspace_init_dir.iterdir():
-            if not src.is_file():
-                continue
-            dest = workspace_dir / src.name
-            if not dest.exists():
-                shutil.copy2(src, dest)
-                logger.info("workspace init: copied %s to workspace", src.name)
-        for f in workspace_dir.glob("*.md"):
-            try:
-                f.chmod(0o666)
-            except OSError as e:
-                logger.warning("workspace chmod 666 failed for %s: %s", f.name, e)
+    # Workspace init: seed template files + ensure sandbox-writable perms.
+    _init_workspace_files(workspace_dir)
 
-    # Build Feishu sender or capture sender
-    if is_dev and cfg.debug.enable_test_api:
-        sender = CaptureSender()
-    else:
-        import lark_oapi as lark
-        lark_client = lark.Client.builder() \
-            .app_id(cfg.feishu.app_id) \
-            .app_secret(cfg.feishu.app_secret) \
-            .build()
-        from xiaopaw.feishu.sender import FeishuSender
-        sender = FeishuSender(
-            client=lark_client,
-            max_retries=cfg.sender.max_retries,
-            retry_backoff=tuple(cfg.sender.retry_backoff),
-            max_concurrent=cfg.sender.max_concurrent,
-        )
+    # Build Feishu sender (or CaptureSender in dev/test-API mode)
+    sender = _build_sender(cfg, is_dev)
 
     agent_fn = build_agent_fn(
         sender=sender,
@@ -184,6 +273,7 @@ async def main() -> None:
         max_queue_size=cfg.runner.max_queue_size,
         data_dir=data_dir,
         hook_registry=hook_registry,
+        event_bus=event_bus,
     )
 
     # Start metrics server
@@ -242,6 +332,23 @@ async def main() -> None:
             cfg.skill_market.sync_interval_hours,
         )
 
+    # Start community background tasks (stats aggregation + cleanup).
+    community_stats_task: asyncio.Task | None = None
+    community_cleanup_task: asyncio.Task | None = None
+    if community_registry is not None:
+        if hasattr(community_registry, 'stats_aggregation_loop') and hasattr(community_registry, 'cleanup_loop'):
+            community_stats_task = asyncio.create_task(
+                community_registry.stats_aggregation_loop(),
+                name="community-stats",
+            )
+            community_cleanup_task = asyncio.create_task(
+                community_registry.cleanup_loop(),
+                name="community-cleanup",
+            )
+            logger.info("community background tasks scheduled (stats=1h, cleanup=1d)")
+        else:
+            logger.warning("CommunityRegistry missing background task methods, skipping community tasks")
+
     # Start TestAPI (dev only)
     test_api_runner = None
     if is_dev and cfg.debug.enable_test_api:
@@ -273,6 +380,20 @@ async def main() -> None:
         # Initialize user auth (SQLite)
         user_auth = UserAuth(data_dir / "auth.db")
 
+        # Migrate legacy p2p:web_user sessions to first user's routing_key
+        if pg_store:
+            user_count = user_auth.get_user_count() if hasattr(user_auth, 'get_user_count') else 1
+            if user_count > 1:
+                logger.warning(
+                    "Multiple users found (%d); skipping legacy migration to avoid misattribution",
+                    user_count,
+                )
+            else:
+                first_user = user_auth.get_first_user()
+                if first_user:
+                    target_rk = f"p2p:web_{first_user['username']}"
+                    pg_store.migrate_legacy_routing_keys(target_rk)
+
         # Initialize expert registry (reuses auth.db)
         from xiaopaw.frontend.expert import ExpertRegistry
         expert_registry = ExpertRegistry(data_dir / "auth.db")
@@ -296,6 +417,10 @@ async def main() -> None:
             expert_registry=expert_registry,
             automation_registry=automation_registry,
             channel_manager=channel_manager,
+            community_registry=community_registry,
+            export_service=export_service,
+            search_service=search_service,
+            activity_recorder=activity_recorder,
         )
         frontend_runner = web.AppRunner(frontend_app)
         await frontend_runner.setup()
@@ -346,6 +471,18 @@ async def main() -> None:
         market_sync_task.cancel()
         try:
             await market_sync_task
+        except asyncio.CancelledError:
+            pass
+    if community_stats_task is not None:
+        community_stats_task.cancel()
+        try:
+            await community_stats_task
+        except asyncio.CancelledError:
+            pass
+    if community_cleanup_task is not None:
+        community_cleanup_task.cancel()
+        try:
+            await community_cleanup_task
         except asyncio.CancelledError:
             pass
     await runner.shutdown()

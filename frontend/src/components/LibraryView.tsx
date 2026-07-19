@@ -380,7 +380,7 @@ function TaskResultsTab({
         </select>
 
         {/* Search */}
-        <div className="relative flex-1 min-w-[200px] max-w-md">
+        <div className="relative flex-1 min-w-[200px] max-w-[min(90%,448px)]">
           <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
             <SearchIcon />
           </div>

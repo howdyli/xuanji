@@ -13,8 +13,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 const API_BASE = '/api/frontend'
-const TOKEN = 'test-token-dev-2024'
-const authHeaders = { Authorization: `Bearer ${TOKEN}` }
+function getToken(): string {
+  return (typeof localStorage !== 'undefined' && localStorage.getItem('auth_token')) || ''
+}
+function authHeaders(): Record<string, string> {
+  return { Authorization: `Bearer ${getToken()}` }
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────
 export interface InstalledSkill {
@@ -416,7 +420,7 @@ function UploadDialog({ onClose, onUploaded }: { onClose: () => void; onUploaded
       fd.append('file', file)
       const res = await fetch(
         `${API_BASE}/skills/upload${overwrite ? '?overwrite=true' : ''}`,
-        { method: 'POST', headers: authHeaders, body: fd },
+        { method: 'POST', headers: authHeaders(), body: fd },
       )
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -478,7 +482,7 @@ function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
     try {
       const res = await fetch(`${API_BASE}/skills`, {
         method: 'POST',
-        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, description, body, type: type_, author, version: '1.0.0' }),
       })
       const data = await res.json().catch(() => ({}))
@@ -584,7 +588,7 @@ export function SkillManagerView() {
   }, [])
 
   const loadInstalled = useCallback(async () => {
-    const res = await fetch(`${API_BASE}/skills`, { headers: authHeaders })
+    const res = await fetch(`${API_BASE}/skills`, { headers: authHeaders() })
     const data = await res.json().catch(() => ({}))
     if (res.ok && data?.skills) setInstalled(data.skills as InstalledSkill[])
     else if (!res.ok) setErr(data?.error || `加载失败 (${res.status})`)
@@ -592,7 +596,7 @@ export function SkillManagerView() {
 
   const loadMarket = useCallback(async (s = '') => {
     const url = `${API_BASE}/market/skills${s ? `?search=${encodeURIComponent(s)}` : ''}`
-    const res = await fetch(url, { headers: authHeaders })
+    const res = await fetch(url, { headers: authHeaders() })
     const data = await res.json().catch(() => ({}))
     if (res.ok && data?.skills) setMarket(data.skills as MarketSkill[])
     else if (!res.ok) setErr(data?.error || `加载市场失败 (${res.status})`)
@@ -635,7 +639,7 @@ export function SkillManagerView() {
 
   const openInstalledDetail = useCallback(async (name: string) => {
     setDetail({ name, __kind: 'installed' })
-    const res = await fetch(`${API_BASE}/skills/${encodeURIComponent(name)}`, { headers: authHeaders })
+    const res = await fetch(`${API_BASE}/skills/${encodeURIComponent(name)}`, { headers: authHeaders() })
     const data = await res.json().catch(() => ({}))
     if (res.ok) setDetail({ ...data, __kind: 'installed' })
   }, [])
@@ -644,7 +648,7 @@ export function SkillManagerView() {
     async (name: string) => {
       setDetail({ name, __kind: 'market' })
       const res = await fetch(`${API_BASE}/market/skills/${encodeURIComponent(name)}`, {
-        headers: authHeaders,
+        headers: authHeaders(),
       })
       const data = await res.json().catch(() => ({}))
       if (res.ok) setDetail({ ...data, __kind: 'market' })
@@ -656,7 +660,7 @@ export function SkillManagerView() {
     setRefreshing(true)
     setErr('')
     try {
-      const res = await fetch(`${API_BASE}/market/refresh`, { method: 'POST', headers: authHeaders })
+      const res = await fetch(`${API_BASE}/market/refresh`, { method: 'POST', headers: authHeaders() })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         setErr(data?.error || `刷新失败 (${res.status})`)
@@ -678,7 +682,7 @@ export function SkillManagerView() {
           const url = `${API_BASE}/market/skills/${encodeURIComponent(s.name!)}/install${
             action === 'reinstall' ? '?overwrite=true' : ''
           }`
-          const res = await fetch(url, { method: 'POST', headers: authHeaders })
+          const res = await fetch(url, { method: 'POST', headers: authHeaders() })
           const data = await res.json().catch(() => ({}))
           if (!res.ok) {
             fireToast(`安装失败：${data?.error || res.status}`)
@@ -691,7 +695,7 @@ export function SkillManagerView() {
           if (!confirm(`确定卸载技能「${s.name}」？此操作会删除本地文件。`)) return
           const res = await fetch(`${API_BASE}/skills/${encodeURIComponent(s.name!)}`, {
             method: 'DELETE',
-            headers: authHeaders,
+            headers: authHeaders(),
           })
           const data = await res.json().catch(() => ({}))
           if (!res.ok) {
@@ -704,7 +708,7 @@ export function SkillManagerView() {
         } else if (action === 'toggle') {
           const res = await fetch(`${API_BASE}/skills/${encodeURIComponent(s.name!)}/toggle`, {
             method: 'POST',
-            headers: { ...authHeaders, 'Content-Type': 'application/json' },
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ enabled: !s.enabled }),
           })
           const data = await res.json().catch(() => ({}))
