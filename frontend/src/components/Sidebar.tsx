@@ -183,11 +183,21 @@ useEffect(() => {
         marginBottom: 'var(--space-5)',
       }}>
         <div className="sidebar-logo" style={{ flexShrink: 0, marginBottom: 0 }}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <line x1="5" y1="7" x2="19" y2="7" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-            <line x1="5" y1="12" x2="19" y2="12" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-            <line x1="5" y1="17" x2="19" y2="17" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-            <line x1="12" y1="4" x2="12" y2="20" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+            {/* Shield outline */}
+            <path d="M12 2.5L4.5 6v5.5c0 4.5 3.2 8.2 7.5 9.5 4.3-1.3 7.5-5 7.5-9.5V6L12 2.5z" fill="#0D2E5A" stroke="#26C6DA" strokeWidth="0.8" strokeLinejoin="round"/>
+            {/* Robot head */}
+            <rect x="8.2" y="8.5" width="7.6" height="6" rx="1.8" fill="#E8EFF5"/>
+            {/* Antenna */}
+            <line x1="12" y1="6.8" x2="12" y2="8.5" stroke="#E8EFF5" strokeWidth="1" strokeLinecap="round"/>
+            <circle cx="12" cy="6.3" r="0.9" fill="#26C6DA"/>
+            {/* Eyes */}
+            <circle cx="10.3" cy="11.2" r="1.1" fill="#26C6DA"/>
+            <circle cx="13.7" cy="11.2" r="1.1" fill="#26C6DA"/>
+            {/* Mouth */}
+            <line x1="10.5" y1="13.2" x2="13.5" y2="13.2" stroke="#90A4AE" strokeWidth="0.7" strokeLinecap="round"/>
+            {/* Code brackets */}
+            <text x="5" y="19" fontSize="4.5" fill="#26C6DA" fontFamily="monospace" fontWeight="bold">&lt;/&gt;</text>
           </svg>
         </div>
         {expanded && (

@@ -95,7 +95,7 @@ html, body, #root {
   --gradient-primary: linear-gradient(135deg, #4F6EF7 0%, #7C5CFC 100%);
   --gradient-blue: linear-gradient(135deg, #4F6EF7 0%, #3D5CE5 100%);
   --gradient-sidebar: var(--sidebar-bg);
-  --gradient-sidebar-accent: linear-gradient(135deg, #3898EC 0%, #2B7CD4 100%);
+  --gradient-sidebar-accent: linear-gradient(135deg, #E0F5F0 0%, #D0EFE8 100%);
 
   /* ── 排版系统 ──────────────────────────────────────────────── */
 
@@ -240,7 +240,7 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(56, 152, 236, 0.3);
+  box-shadow: 0 4px 12px rgba(38, 198, 218, 0.25);
   margin-bottom: var(--space-6);
   transition: transform var(--duration-fast) var(--ease-bounce);
   flex-direction: row;

@@ -159,6 +159,21 @@ function App() {
     if (authToken && currentUser) fetchSessions()
   }, [authToken, currentUser, fetchSessions])
 
+  // Poll sessions every 30s + refresh on tab focus for near-real-time counters
+  useEffect(() => {
+    if (!authToken) return
+    const poll = setInterval(fetchSessions, 30_000)
+    const onFocus = () => fetchSessions()
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') fetchSessions()
+    })
+    return () => {
+      clearInterval(poll)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [authToken, fetchSessions])
+
   // Load messages when a session is selected
   const handleSelectSession = useCallback(async (id: string) => {
     if (!authToken) return
