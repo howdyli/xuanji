@@ -26,5 +26,6 @@ export interface ApiResponse {
 export interface CurrentUser {
   id: number
   username: string
+  is_admin?: boolean
   created_at?: string
 }

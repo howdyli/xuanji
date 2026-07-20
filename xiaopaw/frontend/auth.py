@@ -41,6 +41,7 @@ class UserAuth:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     username TEXT UNIQUE NOT NULL,
                     password_hash TEXT NOT NULL,
+                    is_admin INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS sessions (
@@ -50,7 +51,38 @@ class UserAuth:
                     expires_at TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS teams (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    owner_id INTEGER NOT NULL REFERENCES users(id),
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS team_members (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL DEFAULT 'member',
+                    joined_at TEXT NOT NULL,
+                    UNIQUE(team_id, user_id)
+                );
+                CREATE TABLE IF NOT EXISTS team_invitations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                    inviter_id INTEGER NOT NULL REFERENCES users(id),
+                    code TEXT UNIQUE NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    used_by INTEGER REFERENCES users(id),
+                    used_at TEXT,
+                    created_at TEXT NOT NULL
+                );
             """)
+            # Idempotent migration: add is_admin to pre-existing user tables
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+            if "is_admin" not in cols:
+                conn.execute(
+                    "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0"
+                )
 
     def _init_default_admin(self) -> None:
         with self._connect() as conn:
@@ -59,7 +91,7 @@ class UserAuth:
                 pw_hash = self._hash_password("admin123")
                 now = datetime.now(timezone.utc).isoformat()
                 conn.execute(
-                    "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+                    "INSERT INTO users (username, password_hash, is_admin, created_at) VALUES (?, ?, 1, ?)",
                     ("admin", pw_hash, now),
                 )
                 logger.warning(
@@ -172,12 +204,17 @@ class UserAuth:
         """Get user info by id."""
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, username, created_at FROM users WHERE id = ?",
+                "SELECT id, username, is_admin, created_at FROM users WHERE id = ?",
                 (user_id,),
             ).fetchone()
         if not row:
             return None
-        return {"id": row[0], "username": row[1], "created_at": row[2]}
+        return {
+            "id": row[0],
+            "username": row[1],
+            "is_admin": bool(row[2]),
+            "created_at": row[3],
+        }
 
     def get_user_by_token(self, token: str) -> dict | None:
         """Get user info from a valid session token."""
@@ -185,6 +222,23 @@ class UserAuth:
         if user_id is None:
             return None
         return self.get_user(user_id)
+
+    def is_admin(self, user_id: int) -> bool:
+        """Return True if the user is a platform administrator."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT is_admin FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+        return bool(row[0]) if row else False
+
+    def set_admin(self, user_id: int, value: bool) -> bool:
+        """Grant or revoke administrator privileges for a user."""
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE users SET is_admin = ? WHERE id = ?",
+                (1 if value else 0, user_id),
+            )
+        return cur.rowcount > 0
 
     def update_username(self, user_id: int, new_username: str) -> dict | None:
         """Update a user's username.

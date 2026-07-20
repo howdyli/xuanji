@@ -12,6 +12,7 @@
  */
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import type { InstalledSkill } from './SkillManagerView'
+import { AdminReviewView } from './market/AdminReviewView'
 
 // ─── API ─────────────────────────────────────────────────────────────────
 const API_BASE = '/api/frontend/market/community'
@@ -50,6 +51,8 @@ export interface MarketSkillV2 {
   installed: boolean
   updated_at: string
   created_at: string
+  status?: string
+  review_note?: string
 }
 
 export interface Review {
@@ -69,7 +72,7 @@ export interface Category {
   sort_order: number
 }
 
-type TopTab = 'market' | 'installed' | 'my-skills'
+type TopTab = 'market' | 'installed' | 'my-skills' | 'review'
 
 // ─── Reducer ─────────────────────────────────────────────────────────────
 interface MarketState {
@@ -283,19 +286,54 @@ export function useMarketplace(authToken: string) {
 }
 
 // ─── MarketplaceView Component ───────────────────────────────────────────
-export function MarketplaceView({ authToken }: { authToken: string }) {
-  const { state, dispatch, fireToast: _ft } = useMarketplace(authToken)
+export function MarketplaceView({ authToken, isAdmin = false }: { authToken: string; isAdmin?: boolean }) {
+  const { state, dispatch, fireToast, fetchMySkills } = useMarketplace(authToken)
   const [topTab, setTopTab] = useState<TopTab>('market')
-
-  // Suppress unused warning — fireToast available for child components
-  void _ft
+  const [pendingCount, setPendingCount] = useState(0)
+  const [mySkills, setMySkills] = useState<MarketSkillV2[]>([])
+  const [mySkillsLoading, setMySkillsLoading] = useState(false)
 
   const navigateTo = useCallback((view: MarketView) => {
     dispatch({ type: 'SET_VIEW', payload: view })
   }, [dispatch])
 
+  // Fetch pending count for the review tab badge (admins only)
+  const refreshPendingCount = useCallback(async () => {
+    if (!isAdmin) return
+    try {
+      const res = await fetch(`${API_BASE}/admin/pending`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok) setPendingCount(typeof data.total === 'number' ? data.total : (data.skills ?? []).length)
+    } catch { /* silent */ }
+  }, [isAdmin, authToken])
+
+  useEffect(() => {
+    refreshPendingCount()
+  }, [refreshPendingCount])
+
+  const loadMySkills = useCallback(async () => {
+    setMySkillsLoading(true)
+    try {
+      setMySkills(await fetchMySkills())
+    } finally {
+      setMySkillsLoading(false)
+    }
+  }, [fetchMySkills])
+
   // ── Render content by topTab + currentView ──
   const renderContent = () => {
+    if (topTab === 'review') {
+      return (
+        <AdminReviewView
+          authToken={authToken}
+          onCountChange={setPendingCount}
+          fireToast={fireToast}
+        />
+      )
+    }
+
     if (state.loading) {
       return (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -338,7 +376,7 @@ export function MarketplaceView({ authToken }: { authToken: string }) {
     }
 
     // my-skills
-    return <PlaceholderView title="我的发布" hint="管理已发布的技能和收藏 — 即将上线" />
+    return <MySkillsView skills={mySkills} loading={mySkillsLoading} />
   }
 
   return (
@@ -364,9 +402,19 @@ export function MarketplaceView({ authToken }: { authToken: string }) {
           <TabBtn active={topTab === 'installed'} onClick={() => { setTopTab('installed'); navigateTo({ kind: 'installed' }) }}>
             已安装 <span className="ml-0.5 font-normal" style={{ color: 'var(--text-secondary, #9ca3af)' }}>{state.installedSkills.length}</span>
           </TabBtn>
-          <TabBtn active={topTab === 'my-skills'} onClick={() => { setTopTab('my-skills'); navigateTo({ kind: 'my-skills', tab: 'published' }) }}>
+          <TabBtn active={topTab === 'my-skills'} onClick={() => { setTopTab('my-skills'); navigateTo({ kind: 'my-skills', tab: 'published' }); loadMySkills() }}>
             我的发布
           </TabBtn>
+          {isAdmin && (
+            <TabBtn active={topTab === 'review'} onClick={() => { setTopTab('review'); refreshPendingCount() }}>
+              审核
+              {pendingCount > 0 && (
+                <span className="ml-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[10px] font-medium align-middle">
+                  {pendingCount}
+                </span>
+              )}
+            </TabBtn>
+          )}
         </div>
       </header>
 
@@ -405,6 +453,53 @@ function PlaceholderView({ title, hint }: { title: string; hint: string }) {
     <div className="text-center py-20">
       <div className="text-[14px] font-medium" style={{ color: 'var(--text-primary, #374151)' }}>{title}</div>
       <div className="text-[12.5px] mt-1.5" style={{ color: 'var(--text-secondary, #6b7280)' }}>{hint}</div>
+    </div>
+  )
+}
+
+const STATUS_META: Record<string, { label: string; cls: string }> = {
+  pending: { label: '待审核', cls: 'bg-amber-50 text-amber-700' },
+  approved: { label: '已通过', cls: 'bg-emerald-50 text-emerald-700' },
+  rejected: { label: '已拒绝', cls: 'bg-rose-50 text-rose-700' },
+  suspended: { label: '已下架', cls: 'bg-gray-100 text-gray-600' },
+}
+
+function MySkillsView({ skills, loading }: { skills: MarketSkillV2[]; loading: boolean }) {
+  if (loading) {
+    return (
+      <div className="space-y-3">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="bg-white border border-gray-200 rounded-xl p-4 animate-pulse min-h-[80px]">
+            <div className="h-4 bg-gray-100 rounded w-1/3" />
+            <div className="h-3 bg-gray-100 rounded mt-3 w-4/5" />
+          </div>
+        ))}
+      </div>
+    )
+  }
+  if (skills.length === 0) {
+    return <PlaceholderView title="我的发布" hint="你还没有发布任何技能" />
+  }
+  return (
+    <div className="space-y-3">
+      {skills.map((s) => {
+        const meta = STATUS_META[s.status || 'pending'] || STATUS_META.pending
+        return (
+          <div key={s.name} className="bg-white border border-gray-200 rounded-xl p-4">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[14px] font-medium text-gray-900">{s.name}</span>
+              <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">v{s.version}</span>
+              <span className={`text-[11px] px-1.5 py-0.5 rounded ${meta.cls}`}>{meta.label}</span>
+            </div>
+            <p className="text-[12.5px] text-gray-600 mt-1.5 break-words">{s.description}</p>
+            {s.status === 'rejected' && s.review_note && (
+              <div className="mt-2 text-[12px] text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-2.5 py-1.5">
+                拒绝原因：{s.review_note}
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

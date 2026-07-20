@@ -2,25 +2,17 @@
  * AgentTimeline —— 多 Agent 协作过程时间线可视化
  *
  * 两种模式：
- *   实时模式（isPolling=true, 无 turnId）：每 2s 轮询活动接口
+ *   实时模式（isPolling=true, 无 turnId）：
+ *     优先使用 SSE 实时推送（<50ms 延迟），连接失败 3 次后降级为 2s 轮询
  *   历史模式（turnId 有值）：挂载时一次性查询，折叠面板展示
  *
- * API: GET /api/frontend/sessions/{session_id}/activities?mode=active|history&turn_id=xxx
+ * API:
+ *   SSE:  GET /api/frontend/sessions/{session_id}/activities/stream
+ *   Poll: GET /api/frontend/sessions/{session_id}/activities?mode=active|history&turn_id=xxx
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
-
-// ─── Types ────────────────────────────────────────────────────────────────
-
-interface Activity {
-  event_type: string
-  agent_role: string
-  tool_name: string
-  skill_name: string
-  status: 'active' | 'completed' | 'error'
-  duration_ms: number
-  metadata: Record<string, any>
-  created_at: string
-}
+import { useActivityStream } from '../hooks/useActivityStream'
+import type { Activity, StreamStatus } from '../hooks/useActivityStream'
 
 interface AgentTimelineProps {
   sessionId: string | null
@@ -168,19 +160,76 @@ function TimelineItem({ activity, isLast }: { activity: Activity; isLast: boolea
   )
 }
 
+// ─── Status Indicator ─────────────────────────────────────────────────────
+
+function StreamIndicator({ status }: { status: StreamStatus }) {
+  if (status === 'connecting') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[12px]" style={{ color: 'var(--text-secondary, #64748B)' }}>
+        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+        连接中...
+      </span>
+    )
+  }
+  if (status === 'streaming') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[12px]" style={{ color: 'var(--text-secondary, #64748B)' }}>
+        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+        实时同步
+      </span>
+    )
+  }
+  if (status === 'done') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[12px]" style={{ color: 'var(--text-secondary, #64748B)' }}>
+        <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+        执行完成
+      </span>
+    )
+  }
+  return null
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────
 
 export default function AgentTimeline({ sessionId, turnId, isPolling, authToken }: AgentTimelineProps) {
-  const [activities, setActivities] = useState<Activity[]>([])
+  const [pollActivities, setPollActivities] = useState<Activity[]>([])
   const [error, setError] = useState('')
   const [expanded, setExpanded] = useState(false)
+  const [usePolling, setUsePolling] = useState(false) // fallback flag
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const listEndRef = useRef<HTMLDivElement | null>(null)
 
   const isHistoryMode = !!turnId
 
-  // ── Fetch activities ──
+  // ── SSE real-time stream (primary mode) ──
+  const { activities: sseActivities, status: streamStatus, error: sseError } = useActivityStream(
+    isHistoryMode ? null : sessionId,
+    isPolling && !isHistoryMode && !usePolling,
+    authToken,
+  )
+
+  // ── Detect SSE fallback → switch to polling ──
+  useEffect(() => {
+    if (streamStatus === 'fallback') {
+      setUsePolling(true)
+    }
+  }, [streamStatus])
+
+  // ── Choose active data source ──
+  const activities = (!isHistoryMode && !usePolling) ? sseActivities : pollActivities
+  const currentStatus: StreamStatus = (!isHistoryMode && !usePolling) ? streamStatus : 'streaming'
+
+  // ── Auto-scroll to bottom on new activities ──
+  useEffect(() => {
+    if (!isHistoryMode && activities.length > 0) {
+      listEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [activities.length, isHistoryMode])
+
+  // ── Polling fetch (fallback + history mode) ──
   const fetchActivities = useCallback(async () => {
     if (!sessionId || !authToken) return
 
@@ -206,7 +255,7 @@ export default function AgentTimeline({ sessionId, turnId, isPolling, authToken 
         return
       }
       const data = await res.json().catch(() => ({ activities: [] }))
-      setActivities(data.activities ?? [])
+      setPollActivities(data.activities ?? [])
       setError('')
     } catch (e) {
       if ((e as Error).name !== 'AbortError') {
@@ -215,22 +264,21 @@ export default function AgentTimeline({ sessionId, turnId, isPolling, authToken 
     }
   }, [sessionId, authToken, isHistoryMode, turnId])
 
-  // ── Real-time polling mode ──
+  // ── Polling mode: interval (fallback for real-time) ──
   useEffect(() => {
     if (isHistoryMode) return
+    if (!usePolling) return // SSE is primary
 
     if (isPolling && sessionId) {
-      // Immediate first fetch, then every 2s
       fetchActivities()
       intervalRef.current = setInterval(fetchActivities, 2000)
     } else {
-      // Stop polling & clear
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
         intervalRef.current = null
       }
       abortRef.current?.abort()
-      setActivities([])
+      setPollActivities([])
       setError('')
     }
 
@@ -240,7 +288,7 @@ export default function AgentTimeline({ sessionId, turnId, isPolling, authToken 
         intervalRef.current = null
       }
     }
-  }, [isPolling, sessionId, isHistoryMode]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isPolling, sessionId, isHistoryMode, usePolling]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── History mode: fetch once on mount ──
   useEffect(() => {
@@ -302,13 +350,24 @@ export default function AgentTimeline({ sessionId, turnId, isPolling, authToken 
     )
   }
 
-  // Real-time mode
-  if (!isPolling && activities.length === 0) return null
+  // Real-time mode (SSE primary, polling fallback)
+  const displayError = error || sseError
+  if (!isPolling && activities.length === 0 && currentStatus === 'idle') return null
 
   return (
     <div className="py-2">
-      {error && (
-        <div className="text-[12px] text-red-500 mb-2 px-2">⚠️ {error}</div>
+      {/* Status indicator bar */}
+      <div className="flex items-center justify-between px-2 mb-1">
+        <StreamIndicator status={currentStatus} />
+        {usePolling && (
+          <span className="text-[11px]" style={{ color: 'var(--text-tertiary, #94A3B8)' }}>
+            轮询模式
+          </span>
+        )}
+      </div>
+
+      {displayError && (
+        <div className="text-[12px] text-red-500 mb-2 px-2">⚠️ {displayError}</div>
       )}
 
       {activities.length > 0 ? (
@@ -316,9 +375,10 @@ export default function AgentTimeline({ sessionId, turnId, isPolling, authToken 
           {activities.map((a, i) => (
             <TimelineItem key={`${a.created_at}-${i}`} activity={a} isLast={i === activities.length - 1} />
           ))}
+          <div ref={listEndRef} />
         </div>
       ) : (
-        // Empty state while polling
+        // Empty state while connecting/streaming
         <div
           className="flex items-center gap-2 text-[13px] px-2 py-1"
           style={{ color: 'var(--text-secondary, #64748B)' }}

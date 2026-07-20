@@ -23,6 +23,7 @@ import { AppearanceSettings } from './components/AppearanceSettings'
 import { ProfileSettings } from './components/ProfileSettings'
 import { ModelConfigView } from './components/ModelConfigView'
 import GlobalSearchView from './components/GlobalSearchView'
+import TeamPanel from './components/TeamPanel'
 
 // ✅ P1 集成：导入 UX 优化组件库
 import { LoadingStates } from './components/UXComponents'
@@ -434,7 +435,7 @@ function App() {
             {typeof window !== 'undefined' && window.location.hash === '#legacy-skills' ? (
               <SkillManagerView />
             ) : (
-              <MarketplaceView authToken={authToken!} />
+              <MarketplaceView authToken={authToken!} isAdmin={!!currentUser.is_admin} />
             )}
           </div>
         ) : activeNav === 'model-config' ? (
@@ -452,6 +453,10 @@ function App() {
         ) : activeNav === 'library' ? (
           <div className="flex-1 flex flex-col min-h-0 view-enter">
             <LibraryView authToken={authToken} />
+          </div>
+        ) : activeNav === 'team' ? (
+          <div className="flex-1 flex flex-col min-h-0 view-enter">
+            {authToken && <TeamPanel authToken={authToken} />}
           </div>
         ) : messages.length === 0 && !historyLoading ? (
           /* ── Unified Workspace: Home state ── */

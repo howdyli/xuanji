@@ -67,6 +67,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     routing_key   TEXT NOT NULL,
     title         TEXT NOT NULL DEFAULT '',
     message_count INT NOT NULL DEFAULT 0,
+    team_id       INTEGER,
+    shared_by     TEXT NOT NULL DEFAULT '',
+    share_permission TEXT NOT NULL DEFAULT 'view',
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -76,6 +79,9 @@ CREATE INDEX IF NOT EXISTS idx_sessions_routing_key
 
 CREATE INDEX IF NOT EXISTS idx_sessions_updated_at
     ON sessions (updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_team_id
+    ON sessions (team_id);
 
 -- ============================================================
 -- Skills management: metadata for builtin + user-uploaded skills
@@ -200,6 +206,11 @@ CREATE INDEX IF NOT EXISTS idx_community_installs
 CREATE INDEX IF NOT EXISTS idx_community_search
     ON community_skills
     USING gin (to_tsvector('simple', coalesce(name,'') || ' ' || coalesce(description,'')));
+
+-- Moderation audit fields (idempotent migration for pre-existing tables).
+ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS reviewed_by  TEXT;
+ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS reviewed_at  TIMESTAMPTZ;
+ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS review_note  TEXT NOT NULL DEFAULT '';
 
 -- ============================================================
 -- Skill reviews: per-user ratings and comments for community skills.

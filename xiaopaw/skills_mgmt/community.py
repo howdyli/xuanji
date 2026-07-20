@@ -71,6 +71,18 @@ class CommunityRegistry:
         except Exception as exc:
             logger.warning("CommunityRegistry: emit %s failed: %s", event.value, exc)
 
+    def _read_local_archive(self, install_url: str) -> bytes:
+        """读取 local:// 归档，路径必须限定在 _storage_dir 内以防目录穿越。"""
+        raw = install_url[len("local://"):]
+        target = Path(raw).resolve()
+        root = self._storage_dir.resolve()
+        if root != target and root not in target.parents:
+            raise CommunityError("invalid_install_url", "install path escapes storage dir")
+        try:
+            return target.read_bytes()
+        except OSError as exc:
+            raise CommunityError("download_failed", str(exc))
+
     # ─── 列表与搜索 ──────────────────────────────────────────────
 
     def list_skills(
@@ -183,10 +195,15 @@ class CommunityRegistry:
         install_url = skill.get("install_url", "")
         if not install_url:
             raise CommunityError("no_install_url", f"no install_url for: {name}")
-        try:
-            archive_bytes = await self._market._archive_fetcher(install_url, self._install_max_bytes)
-        except Exception as exc:
-            raise CommunityError("download_failed", str(exc))
+        if install_url.startswith("local://"):
+            archive_bytes = await asyncio.to_thread(
+                self._read_local_archive, install_url
+            )
+        else:
+            try:
+                archive_bytes = await self._market._archive_fetcher(install_url, self._install_max_bytes)
+            except Exception as exc:
+                raise CommunityError("download_failed", str(exc))
         if not archive_bytes:
             raise CommunityError("empty_archive", "downloaded archive is empty")
         # 校验哈希
@@ -448,3 +465,77 @@ class CommunityRegistry:
         except Exception as exc:
             logger.error("list_my_skills failed: %s", exc)
             return []
+
+    # ─── 审核（管理员） ──────────────────────────────────────────
+
+    def list_pending(self, page: int = 1, page_size: int = 20) -> dict[str, Any]:
+        """分页查询待审核技能，按 created_at ASC（先到先审）。"""
+        offset = (max(1, page) - 1) * page_size
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM community_skills WHERE status = 'pending'"
+                    )
+                    total = cur.fetchone()["count"]
+                    cur.execute(
+                        "SELECT * FROM community_skills WHERE status = 'pending' "
+                        "ORDER BY created_at ASC LIMIT %s OFFSET %s",
+                        (page_size, offset),
+                    )
+                    rows = [dict(r) for r in cur.fetchall()]
+            return {"skills": rows, "total": total}
+        except Exception as exc:
+            logger.error("list_pending failed: %s", exc)
+            return {"skills": [], "total": 0}
+
+    def moderate_skill(
+        self, name: str, action: str, reviewer: str, note: str = ""
+    ) -> dict[str, Any]:
+        """审核技能：action in ('approve','reject')，更新状态与审计字段。"""
+        mapping = {"approve": "approved", "reject": "rejected"}
+        if action not in mapping:
+            raise CommunityError("invalid_action", f"invalid action: {action}")
+        new_status = mapping[action]
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(
+                        "UPDATE community_skills SET status=%s, reviewed_by=%s, "
+                        "reviewed_at=NOW(), review_note=%s, updated_at=NOW() "
+                        "WHERE name=%s RETURNING *",
+                        (new_status, reviewer, note, name),
+                    )
+                    row = cur.fetchone()
+                conn.commit()
+            if not row:
+                raise CommunityError("not_found", f"community skill not found: {name}")
+            if action == "approve":
+                self._emit(CommunityEvent.SKILL_APPROVED, skill_name=name, reviewer=reviewer)
+            else:
+                self._emit(CommunityEvent.SKILL_SUSPENDED, skill_name=name, reviewer=reviewer)
+            return dict(row)
+        except CommunityError:
+            raise
+        except Exception as exc:
+            logger.error("moderate_skill failed: %s", exc)
+            raise CommunityError("db_error", str(exc))
+
+    def set_featured(self, name: str, featured: bool) -> bool:
+        """切换技能精选标记（仅管理员用）。"""
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE community_skills SET featured=%s, updated_at=NOW() "
+                        "WHERE name=%s",
+                        (featured, name),
+                    )
+                    affected = cur.rowcount
+                conn.commit()
+            if affected:
+                self._emit(CommunityEvent.SKILL_FEATURED, skill_name=name, featured=featured)
+            return affected > 0
+        except Exception as exc:
+            logger.error("set_featured failed: %s", exc)
+            return False

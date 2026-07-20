@@ -376,9 +376,13 @@ async def main() -> None:
     if cfg.frontend.enabled:
         from xiaopaw.frontend.auth import UserAuth
         from xiaopaw.frontend.server import create_frontend_app
+        from xiaopaw.frontend.team import TeamStore
 
         # Initialize user auth (SQLite)
         user_auth = UserAuth(data_dir / "auth.db")
+
+        # Initialize team store (reuses auth.db)
+        team_store = TeamStore(data_dir / "auth.db")
 
         # Migrate legacy p2p:web_user sessions to first user's routing_key
         if pg_store:
@@ -421,6 +425,8 @@ async def main() -> None:
             export_service=export_service,
             search_service=search_service,
             activity_recorder=activity_recorder,
+            event_bus=event_bus,
+            team_store=team_store,
         )
         frontend_runner = web.AppRunner(frontend_app)
         await frontend_runner.setup()

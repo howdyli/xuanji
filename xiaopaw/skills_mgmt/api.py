@@ -85,6 +85,19 @@ def _err(code: str, msg: str = "", status: int = 400) -> web.Response:
     return web.json_response({"error": code, "message": msg or code}, status=status)
 
 
+def _require_admin(request: web.Request) -> dict | None:
+    """Return the current user dict if they are a platform admin, else None."""
+    user = _get_current_user(request)
+    if not user:
+        return None
+    user_auth = request.app.get("user_auth")
+    if not user_auth:
+        return None
+    if not user_auth.is_admin(user["id"]):
+        return None
+    return user
+
+
 # ─── List / Detail ────────────────────────────────────────────
 
 
@@ -1126,6 +1139,72 @@ async def handle_community_remove_favorite(request: web.Request) -> web.Response
     return web.json_response({"ok": True})
 
 
+# ─── Community Admin Moderation Handlers ────────────────
+
+
+async def handle_community_pending(request: web.Request) -> web.Response:
+    """GET /api/frontend/market/community/admin/pending - list skills awaiting review."""
+    if _require_admin(request) is None:
+        return _err("forbidden", "admin required", status=403)
+    registry = _get_community(request)
+    if not registry:
+        return _err("community_unavailable", status=503)
+    try:
+        page = int(request.query.get("page", 1))
+        page_size = int(request.query.get("page_size", 20))
+    except ValueError:
+        page, page_size = 1, 20
+    result = registry.list_pending(page=page, page_size=page_size)
+    return web.json_response(result)
+
+
+async def handle_community_moderate_skill(request: web.Request) -> web.Response:
+    """POST /api/frontend/market/community/admin/skills/{name}/moderate - approve/reject."""
+    admin = _require_admin(request)
+    if admin is None:
+        return _err("forbidden", "admin required", status=403)
+    registry = _get_community(request)
+    if not registry:
+        return _err("community_unavailable", status=503)
+    name = request.match_info["name"]
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return _err("bad_request", str(exc), status=400)
+    action = body.get("action", "")
+    note = body.get("note", "")
+    try:
+        row = registry.moderate_skill(
+            name=name, action=action, reviewer=admin["username"], note=note
+        )
+    except CommunityError as exc:
+        status = {"not_found": 404, "invalid_action": 400}.get(exc.code, 422)
+        return _err(exc.code, exc.message, status=status)
+    except Exception as exc:
+        logger.warning("moderate_skill failed: %s", exc)
+        return _err("moderate_failed", str(exc), status=500)
+    return web.json_response({"ok": True, "skill": row})
+
+
+async def handle_community_feature_skill(request: web.Request) -> web.Response:
+    """POST /api/frontend/market/community/admin/skills/{name}/feature - toggle featured."""
+    if _require_admin(request) is None:
+        return _err("forbidden", "admin required", status=403)
+    registry = _get_community(request)
+    if not registry:
+        return _err("community_unavailable", status=503)
+    name = request.match_info["name"]
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return _err("bad_request", str(exc), status=400)
+    featured = bool(body.get("featured", False))
+    ok = registry.set_featured(name=name, featured=featured)
+    if not ok:
+        return _err("not_found", "skill not found", status=404)
+    return web.json_response({"ok": True, "featured": featured})
+
+
 # ─── Community Route Registration ─────────────────────────────
 
 
@@ -1135,6 +1214,14 @@ def register_community_routes(
     """Register community market routes onto the given aiohttp app."""
     app["community_registry"] = registry
     p = "/api/frontend/market/community"
+    # Admin moderation (register before /skills/{name} dynamic segments)
+    app.router.add_get(f"{p}/admin/pending", handle_community_pending)
+    app.router.add_post(
+        f"{p}/admin/skills/{{name}}/moderate", handle_community_moderate_skill
+    )
+    app.router.add_post(
+        f"{p}/admin/skills/{{name}}/feature", handle_community_feature_skill
+    )
     # Market
     app.router.add_get(f"{p}/skills", handle_community_list_skills)
     app.router.add_get(f"{p}/skills/{{name}}", handle_community_get_skill)
