@@ -292,27 +292,61 @@ class CommunityRegistry:
         return row
 
     def update_skill(self, name: str, publisher: str, updates: dict[str, Any]) -> dict[str, Any] | None:
-        """更新技能（仅限发布者）。"""
-        allowed = {"description","version","category","tags","icon_url",
-                    "screenshots","repo_url","install_url","license"}
-        fields = {k: v for k, v in updates.items() if k in allowed}
-        if not fields:
+        """更新技能（仅限发布者）。
+
+        展示字段（description/category/tags/icon_url/screenshots/repo_url/license）
+        立即写入线上行。安装产物字段（version/install_url/archive_hash）若技能已
+        ``approved``，则暂存到 ``pending_*`` 等待管理员复审，期间线上继续服务旧版本；
+        否则（pending/rejected）直接写入线上行，rejected 会重新排队为 pending。
+        """
+        display_allowed = {"description", "category", "tags", "icon_url",
+                           "screenshots", "repo_url", "license"}
+        artifact_allowed = {"version", "install_url", "archive_hash"}
+        display = {k: v for k, v in updates.items() if k in display_allowed}
+        artifact = {k: v for k, v in updates.items() if k in artifact_allowed}
+        if not display and not artifact:
             raise CommunityError("no_fields", "no valid fields to update")
-        parts, params = [], []
-        for k, v in fields.items():
-            parts.append(f"{k} = %s"); params.append(v)
-        parts.append("updated_at = NOW()")
-        params.extend([name, publisher])
-        sql = f"UPDATE community_skills SET {', '.join(parts)} WHERE name = %s AND publisher = %s RETURNING *"
         try:
             with self._connect() as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    cur.execute(sql, params)
+                    cur.execute(
+                        "SELECT status FROM community_skills "
+                        "WHERE name = %s AND publisher = %s",
+                        (name, publisher),
+                    )
+                    current = cur.fetchone()
+                    if not current:
+                        raise CommunityError("not_owner", "skill not found or not the publisher")
+
+                    parts, params = [], []
+                    # 展示字段始终立即生效。
+                    for k, v in display.items():
+                        parts.append(f"{k} = %s"); params.append(v)
+
+                    if artifact:
+                        if current["status"] == "approved":
+                            # 暂存产物变更等待复审；线上已通过版本保持不变。
+                            for k, v in artifact.items():
+                                parts.append(f"pending_{k} = %s"); params.append(v)
+                            parts.append("has_pending_update = TRUE")
+                            parts.append("pending_submitted_at = NOW()")
+                        else:
+                            # 无已通过版本需保护：直接写入线上行。
+                            for k, v in artifact.items():
+                                parts.append(f"{k} = %s"); params.append(v)
+                            if current["status"] == "rejected":
+                                parts.append("status = 'pending'")
+
+                    parts.append("updated_at = NOW()")
+                    params.extend([name, publisher])
+                    cur.execute(
+                        f"UPDATE community_skills SET {', '.join(parts)} "
+                        f"WHERE name = %s AND publisher = %s RETURNING *",
+                        params,
+                    )
                     row = cur.fetchone()
                 conn.commit()
-            if not row:
-                raise CommunityError("not_owner", "skill not found or not the publisher")
-            return dict(row)
+            return dict(row) if row else None
         except CommunityError: raise
         except Exception as exc:
             logger.error("update_skill failed: %s", exc)
@@ -469,18 +503,18 @@ class CommunityRegistry:
     # ─── 审核（管理员） ──────────────────────────────────────────
 
     def list_pending(self, page: int = 1, page_size: int = 20) -> dict[str, Any]:
-        """分页查询待审核技能，按 created_at ASC（先到先审）。"""
+        """分页查询待审核技能（首次待审 + 待审版本更新），先到先审。"""
         offset = (max(1, page) - 1) * page_size
+        where = "status = 'pending' OR has_pending_update = TRUE"
         try:
             with self._connect() as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    cur.execute(
-                        "SELECT COUNT(*) FROM community_skills WHERE status = 'pending'"
-                    )
+                    cur.execute(f"SELECT COUNT(*) FROM community_skills WHERE {where}")
                     total = cur.fetchone()["count"]
                     cur.execute(
-                        "SELECT * FROM community_skills WHERE status = 'pending' "
-                        "ORDER BY created_at ASC LIMIT %s OFFSET %s",
+                        f"SELECT * FROM community_skills WHERE {where} "
+                        "ORDER BY COALESCE(pending_submitted_at, created_at) ASC "
+                        "LIMIT %s OFFSET %s",
                         (page_size, offset),
                     )
                     rows = [dict(r) for r in cur.fetchall()]
@@ -492,28 +526,67 @@ class CommunityRegistry:
     def moderate_skill(
         self, name: str, action: str, reviewer: str, note: str = ""
     ) -> dict[str, Any]:
-        """审核技能：action in ('approve','reject')，更新状态与审计字段。"""
-        mapping = {"approve": "approved", "reject": "rejected"}
-        if action not in mapping:
+        """审核技能：action in ('approve','reject')，区分首发审核与版本更新复审。
+
+        若存在待审更新（has_pending_update）：approve 将 pending_* 提升为线上
+        版本，reject 丢弃 pending_* 并保留已通过版本（status 仍 approved）。
+        否则为首次审核：pending → approved / rejected。
+        """
+        if action not in ("approve", "reject"):
             raise CommunityError("invalid_action", f"invalid action: {action}")
-        new_status = mapping[action]
         try:
             with self._connect() as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                     cur.execute(
-                        "UPDATE community_skills SET status=%s, reviewed_by=%s, "
-                        "reviewed_at=NOW(), review_note=%s, updated_at=NOW() "
-                        "WHERE name=%s RETURNING *",
-                        (new_status, reviewer, note, name),
+                        "SELECT publisher, has_pending_update FROM community_skills "
+                        "WHERE name = %s",
+                        (name,),
                     )
+                    current = cur.fetchone()
+                    if not current:
+                        raise CommunityError("not_found", f"community skill not found: {name}")
+                    is_update = bool(current["has_pending_update"])
+                    publisher = current["publisher"]
+
+                    if action == "approve" and is_update:
+                        # 将暂存产物提升为线上版本，status 保持 approved。
+                        cur.execute(
+                            "UPDATE community_skills SET "
+                            "version = COALESCE(pending_version, version), "
+                            "install_url = COALESCE(pending_install_url, install_url), "
+                            "archive_hash = COALESCE(pending_archive_hash, archive_hash), "
+                            "pending_version = NULL, pending_install_url = NULL, "
+                            "pending_archive_hash = NULL, has_pending_update = FALSE, "
+                            "pending_submitted_at = NULL, reviewed_by = %s, "
+                            "reviewed_at = NOW(), review_note = %s, updated_at = NOW() "
+                            "WHERE name = %s RETURNING *",
+                            (reviewer, note, name),
+                        )
+                    elif action == "reject" and is_update:
+                        # 丢弃待审更新，保留线上已通过版本（status 仍 approved）。
+                        cur.execute(
+                            "UPDATE community_skills SET "
+                            "pending_version = NULL, pending_install_url = NULL, "
+                            "pending_archive_hash = NULL, has_pending_update = FALSE, "
+                            "pending_submitted_at = NULL, reviewed_by = %s, "
+                            "reviewed_at = NOW(), review_note = %s, updated_at = NOW() "
+                            "WHERE name = %s RETURNING *",
+                            (reviewer, note, name),
+                        )
+                    else:
+                        # 首次审核：pending → approved / rejected。
+                        new_status = "approved" if action == "approve" else "rejected"
+                        cur.execute(
+                            "UPDATE community_skills SET status = %s, reviewed_by = %s, "
+                            "reviewed_at = NOW(), review_note = %s, updated_at = NOW() "
+                            "WHERE name = %s RETURNING *",
+                            (new_status, reviewer, note, name),
+                        )
                     row = cur.fetchone()
                 conn.commit()
-            if not row:
-                raise CommunityError("not_found", f"community skill not found: {name}")
-            if action == "approve":
-                self._emit(CommunityEvent.SKILL_APPROVED, skill_name=name, reviewer=reviewer)
-            else:
-                self._emit(CommunityEvent.SKILL_SUSPENDED, skill_name=name, reviewer=reviewer)
+            event = CommunityEvent.SKILL_APPROVED if action == "approve" else CommunityEvent.SKILL_REJECTED
+            self._emit(event, skill_name=name, publisher=publisher,
+                       reviewer=reviewer, note=note, is_update=is_update)
             return dict(row)
         except CommunityError:
             raise

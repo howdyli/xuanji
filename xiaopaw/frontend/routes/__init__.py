@@ -16,6 +16,7 @@ from xiaopaw.frontend.routes.search import register_search_routes
 from xiaopaw.frontend.routes.activity import register_activity_routes
 from xiaopaw.frontend.routes.activity_stream import register_activity_stream_routes
 from xiaopaw.frontend.routes.team import register_team_routes
+from xiaopaw.frontend.routes.notifications import register_notification_routes
 
 
 def register_all_routes(app: web.Application) -> None:
@@ -32,3 +33,4 @@ def register_all_routes(app: web.Application) -> None:
     register_activity_routes(app)
     register_activity_stream_routes(app)
     register_team_routes(app)
+    register_notification_routes(app)

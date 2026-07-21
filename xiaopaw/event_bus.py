@@ -29,6 +29,7 @@ EventBus 是"业务事件分发层"的事件体系（agent_started / token_strea
     CommunityEvent:
         SKILL_PUBLISHED   : 技能发布到社区
         SKILL_APPROVED    : 技能审核通过
+        SKILL_REJECTED    : 技能审核驳回
         SKILL_INSTALLED   : 技能被安装
         SKILL_REVIEWED    : 技能被评价
         SKILL_FEATURED    : 技能被推荐/精选
@@ -70,6 +71,7 @@ class CommunityEvent(str, Enum):
 
     SKILL_PUBLISHED = "community.skill_published"
     SKILL_APPROVED = "community.skill_approved"
+    SKILL_REJECTED = "community.skill_rejected"
     SKILL_INSTALLED = "community.skill_installed"
     SKILL_REVIEWED = "community.skill_reviewed"
     SKILL_FEATURED = "community.skill_featured"

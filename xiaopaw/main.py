@@ -215,6 +215,17 @@ async def main() -> None:
     logger.info("ActivityRecorder subscribed to EventBus (pg_store=%s)",
                 "enabled" if pg_store else "disabled")
 
+    # NotificationService — 技能审核结果落地为发布者站内通知（需要 PG）
+    notification_store = None
+    if cfg.frontend.enabled and cfg.memory.db_dsn:
+        from xiaopaw.event_bus import CommunityEvent
+        from xiaopaw.notifications.store import NotificationService, NotificationStore
+        notification_store = NotificationStore(dsn=cfg.memory.db_dsn)
+        notification_svc = NotificationService(notification_store)
+        event_bus.subscribe(CommunityEvent.SKILL_APPROVED, notification_svc.handle_event)
+        event_bus.subscribe(CommunityEvent.SKILL_REJECTED, notification_svc.handle_event)
+        logger.info("NotificationService subscribed to EventBus (approve/reject)")
+
     # Skill registry + market + community layers (all gracefully optional)
     (
         skill_registry,
@@ -439,6 +450,7 @@ async def main() -> None:
             activity_recorder=activity_recorder,
             event_bus=event_bus,
             team_store=team_store,
+            notification_store=notification_store,
         )
         frontend_runner = web.AppRunner(frontend_app)
         await frontend_runner.setup()

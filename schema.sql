@@ -219,6 +219,15 @@ ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS reviewed_by  TEXT;
 ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS reviewed_at  TIMESTAMPTZ;
 ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS review_note  TEXT NOT NULL DEFAULT '';
 
+-- Version-update moderation: staged install-artifact changes awaiting re-review.
+-- Live version/install_url/archive_hash/status keep serving the approved build
+-- while pending_* holds the submitted artifact update until an admin decides.
+ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS pending_version       TEXT;
+ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS pending_install_url   TEXT;
+ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS pending_archive_hash  TEXT;
+ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS has_pending_update    BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS pending_submitted_at  TIMESTAMPTZ;
+
 -- ============================================================
 -- Skill reviews: per-user ratings and comments for community skills.
 -- One review per (skill, user) pair enforced by UNIQUE constraint.
@@ -292,4 +301,23 @@ CREATE INDEX IF NOT EXISTS idx_agent_activities_session
     ON agent_activities (session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agent_activities_turn
     ON agent_activities (turn_id);
+
+-- ============================================================
+-- Notifications: per-user pull-based notifications (e.g. skill
+-- moderation outcomes). Recipient is a username; consumers poll
+-- via the frontend API. No cross-channel push.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS notifications (
+    id          BIGSERIAL PRIMARY KEY,
+    recipient   TEXT NOT NULL,            -- username
+    type        TEXT NOT NULL,            -- 'skill_approved' | 'skill_rejected'
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL DEFAULT '',
+    payload     JSONB NOT NULL DEFAULT '{}'::jsonb,  -- {skill_name, reviewer, note, is_update}
+    read        BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_recipient
+    ON notifications (recipient, read, created_at DESC);
 

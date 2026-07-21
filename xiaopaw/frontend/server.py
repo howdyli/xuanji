@@ -54,6 +54,7 @@ def create_frontend_app(
     activity_recorder: Any = None,
     event_bus: Any = None,
     team_store: Any = None,
+    notification_store: Any = None,
 ) -> web.Application:
     """Create the aiohttp Application serving both API and static files."""
     app = web.Application(client_max_size=max(skills_max_upload_bytes, 5 * 1024 * 1024) + 1024 * 1024)
@@ -79,6 +80,7 @@ def create_frontend_app(
     app["activity_recorder"] = activity_recorder
     app["event_bus"] = event_bus
     app["team_store"] = team_store
+    app["notification_store"] = notification_store
 
     # Register REST API routes
     register_routes(app)

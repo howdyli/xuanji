@@ -385,6 +385,8 @@ App.tsx 核心状态
 | 认证 | `POST /api/frontend/auth/login` / `register` / `logout` | 登录获取 Bearer Token |
 | 认证 | `GET /api/frontend/auth/me` | 当前用户（含 is_admin） |
 | 组织 | `GET /api/frontend/org` | 当前用户所属组织（租户） |
+| 通知 | `GET /api/frontend/notifications` · `/unread-count` | 站内拉取式通知列表/未读数 |
+| 通知 | `POST /api/frontend/notifications/{id}/read` · `/read-all` | 单条/全部标记已读 |
 | 会话 | `GET /api/frontend/sessions` | 会话列表 |
 | 会话 | `GET /api/frontend/sessions/{id}/messages` | 消息历史 |
 | 会话 | `POST /api/frontend/message` | 发送消息 |
@@ -476,10 +478,12 @@ stateDiagram-v2
 |------|------|
 | 发布 | `CommunityRegistry.publish_skill`：归档存入 `_storage_dir`，生成 `local://{path}` 安装 URL，状态置为 `pending` |
 | 审核权限 | SQLite `users.is_admin` 为权威来源（默认 admin 账户为管理员），API 层 `_require_admin` 门控，非管理员返回 403 |
-| 审核操作 | `list_pending` / `moderate_skill`（approve/reject + 审计字段 reviewed_by/reviewed_at/review_note）/ `set_featured` |
+| 审核操作 | `list_pending`（首发待审 + 待审版本更新）/ `moderate_skill`（approve/reject + 审计字段 reviewed_by/reviewed_at/review_note）/ `set_featured` |
+| 版本更新复审 | 已通过技能的安装产物变更（version/install_url/archive_hash）暂存到 `pending_*`，has_pending_update=TRUE；复审期间线上继续服务旧版本，approve 提升为线上版本、reject 丢弃暂存保留旧版；展示字段更新立即生效不进复审 |
 | 可见性 | 仅 `approved` 技能对市场搜索/列表可见；发布者在「我的发布」可见全部状态及拒绝原因 |
 | 安装 | `install_skill`：`local://` 归档直读（路径限定存储目录内防穿越），http(s) 归档经 fetcher 下载，解包至用户技能目录 |
-| 事件 | EventBus 发布 SKILL_PUBLISHED / SKILL_APPROVED / SKILL_INSTALLED / SKILL_FEATURED / SKILL_SUSPENDED |
+| 事件 | EventBus 发布 SKILL_PUBLISHED / SKILL_APPROVED / SKILL_REJECTED / SKILL_INSTALLED / SKILL_FEATURED / SKILL_SUSPENDED |
+| 审核通知 | `NotificationService` 订阅 SKILL_APPROVED/SKILL_REJECTED，向**发布者**落地一条 `notifications` 表记录（拉取式，区分首发/版本更新） |
 | 前端 | MarketplaceView 四 Tab（市场/已安装/我的发布/审核），审核 Tab 仅管理员可见并带待审角标 |
 
 ---
@@ -602,6 +606,7 @@ erDiagram
     community_skills ||--o{ skill_reviews : "has"
     users ||--o{ user_favorites : "bookmarks"
     sessions ||--o{ agent_activities : "1:N"
+    users ||--o{ notifications : "receives"
 
     sessions {
         text id PK
@@ -660,6 +665,22 @@ erDiagram
         text reviewed_by "审核人"
         timestamptz reviewed_at
         text review_note "拒绝原因"
+        text pending_version "待审版本更新（暂存）"
+        text pending_install_url "待审安装 URL（暂存）"
+        text pending_archive_hash "待审归档哈希（暂存）"
+        boolean has_pending_update "存在待审版本更新"
+        timestamptz pending_submitted_at "版本更新提交时间"
+    }
+
+    notifications {
+        bigserial id PK
+        text recipient "接收者 username"
+        text type "skill_approved/skill_rejected"
+        text title
+        text body
+        jsonb payload
+        boolean read
+        timestamptz created_at
     }
 ```
 
@@ -868,6 +889,6 @@ tests/
 | 协作 | 多用户团队协作（邀请制团队 + 会话共享） | ✅ 已完成 |
 | 生态 | 技能市场生态（发布/审核/上架/安装闭环） | ✅ 已完成 |
 | 加固 | 共享会话 view/edit 权限后端强制校验 | ✅ 已完成 |
-| 后续 | 技能版本更新纳入审核流程、审核通知 | 📋 规划中 |
+| 后续 | 技能版本更新纳入审核流程、审核通知 | ✅ 已完成 |
 | 远期 | 多租户隔离基础（组织租户 + sessions.org_id 纵深防御） | ✅ 已完成 |
 | 远期 | 技能计费与分成（定价/购买授权 + 结算/支付网关） | 📋 规划中 |
