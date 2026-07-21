@@ -82,6 +82,7 @@ class PGStore:
         routing_key: str,
         title: str = "",
         message_count: int = 0,
+        org_id: int | None = None,
     ) -> None:
         """Upsert a session record."""
         if not self._ensure_connection():
@@ -91,12 +92,13 @@ class PGStore:
             def _execute():
                 with self._conn.cursor() as cur:
                     cur.execute(
-                        """INSERT INTO sessions (id, routing_key, title, message_count, updated_at)
-                           VALUES (%s, %s, %s, %s, NOW())
+                        """INSERT INTO sessions (id, routing_key, title, message_count, org_id, updated_at)
+                           VALUES (%s, %s, %s, %s, %s, NOW())
                            ON CONFLICT (id) DO UPDATE SET
                                message_count = EXCLUDED.message_count,
+                               org_id = COALESCE(sessions.org_id, EXCLUDED.org_id),
                                updated_at = NOW()""",
-                        (session_id, routing_key, title, message_count),
+                        (session_id, routing_key, title, message_count, org_id),
                     )
                 self._conn.commit()
             await asyncio.to_thread(_execute)
@@ -243,6 +245,35 @@ class PGStore:
         except psycopg2.Error as exc:
             self._conn.rollback()
             logger.warning("PGStore: migrate_legacy_routing_keys failed: %s", exc)
+
+    def backfill_session_org_ids(self, routing_key_to_org: dict[str, int]) -> int:
+        """Backfill sessions.org_id from a {routing_key: org_id} map.
+
+        Only updates rows where org_id IS NULL (never overwrites). Returns the
+        total updated row count. Runs once at startup; silently degrades to 0
+        if PG is unavailable.
+        """
+        if not routing_key_to_org or not self._ensure_connection():
+            return 0
+        updated = 0
+        try:
+            import psycopg2
+            with self._conn.cursor() as cur:
+                for routing_key, org_id in routing_key_to_org.items():
+                    cur.execute(
+                        "UPDATE sessions SET org_id = %s "
+                        "WHERE routing_key = %s AND org_id IS NULL",
+                        (org_id, routing_key),
+                    )
+                    updated += cur.rowcount
+            self._conn.commit()
+            if updated:
+                logger.info("PGStore: backfilled org_id on %d sessions", updated)
+        except psycopg2.Error as exc:
+            self._conn.rollback()
+            logger.warning("PGStore: backfill_session_org_ids failed: %s", exc)
+            return 0
+        return updated
 
     def close(self) -> None:
         if self._conn:

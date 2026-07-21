@@ -70,9 +70,13 @@ CREATE TABLE IF NOT EXISTS sessions (
     team_id       INTEGER,
     shared_by     TEXT NOT NULL DEFAULT '',
     share_permission TEXT NOT NULL DEFAULT 'view',
+    org_id        BIGINT,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Idempotent migration for pre-existing sessions tables (multi-tenant).
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS org_id BIGINT;
 
 CREATE INDEX IF NOT EXISTS idx_sessions_routing_key
     ON sessions (routing_key);
@@ -82,6 +86,9 @@ CREATE INDEX IF NOT EXISTS idx_sessions_updated_at
 
 CREATE INDEX IF NOT EXISTS idx_sessions_team_id
     ON sessions (team_id);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_org_id
+    ON sessions (org_id);
 
 -- ============================================================
 -- Skills management: metadata for builtin + user-uploaded skills

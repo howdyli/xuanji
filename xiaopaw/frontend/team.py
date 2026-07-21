@@ -37,17 +37,25 @@ class TeamStore:
 
     # ── 团队 CRUD ─────────────────────────────────────────────────────
 
-    def create_team(self, name: str, description: str, owner_id: int) -> dict:
-        """创建团队，owner 自动加入为 'owner' 角色。"""
+    def create_team(self, name: str, description: str, owner_id: int, org_id: int | None = None) -> dict:
+        """创建团队，owner 自动加入为 'owner' 角色。
+
+        org_id 未显式指定时，继承 owner 所属组织，保证团队归属单一租户。
+        """
         name = name.strip()
         if not name or len(name) < 2 or len(name) > 30:
             raise ValueError("团队名称需要 2-30 个字符")
 
         now = datetime.now(timezone.utc).isoformat()
         with self._lock, self._connect() as conn:
+            if org_id is None:
+                row = conn.execute(
+                    "SELECT org_id FROM users WHERE id = ?", (owner_id,)
+                ).fetchone()
+                org_id = row["org_id"] if row else None
             cur = conn.execute(
-                "INSERT INTO teams (name, description, owner_id, created_at) VALUES (?, ?, ?, ?)",
-                (name, description.strip(), owner_id, now),
+                "INSERT INTO teams (name, description, owner_id, org_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                (name, description.strip(), owner_id, org_id, now),
             )
             team_id = cur.lastrowid
             # Owner 自动成为成员
@@ -61,12 +69,34 @@ class TeamStore:
         """获取团队基本信息。"""
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, name, description, owner_id, created_at FROM teams WHERE id = ?",
+                "SELECT id, name, description, owner_id, org_id, created_at FROM teams WHERE id = ?",
                 (team_id,),
             ).fetchone()
         if not row:
             return None
         return dict(row)
+
+    def get_team_org_id(self, team_id: int) -> int | None:
+        """获取团队所属组织 id，不存在返回 None。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT org_id FROM teams WHERE id = ?", (team_id,)
+            ).fetchone()
+        return row["org_id"] if row else None
+
+    @staticmethod
+    def _assert_same_org(conn: sqlite3.Connection, team_id: int, user_id: int) -> None:
+        """拒绝跨组织加入团队。任一侧 org_id 为 NULL（legacy 未回填）时不阻断。"""
+        team = conn.execute(
+            "SELECT org_id FROM teams WHERE id = ?", (team_id,)
+        ).fetchone()
+        user = conn.execute(
+            "SELECT org_id FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        team_org = team["org_id"] if team else None
+        user_org = user["org_id"] if user else None
+        if team_org is not None and user_org is not None and team_org != user_org:
+            raise ValueError("跨组织禁止加入团队")
 
     def list_teams_for_user(self, user_id: int) -> list[dict]:
         """列出用户加入的所有团队（含角色信息）。"""
@@ -96,9 +126,10 @@ class TeamStore:
     # ── 成员管理 ─────────────────────────────────────────────────────
 
     def add_member(self, team_id: int, user_id: int, role: str = "member") -> dict:
-        """添加成员。"""
+        """添加成员（拒绝跨组织）。"""
         now = datetime.now(timezone.utc).isoformat()
         with self._lock, self._connect() as conn:
+            self._assert_same_org(conn, team_id, user_id)
             try:
                 conn.execute(
                     "INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)",
@@ -224,6 +255,9 @@ class TeamStore:
                 raise ValueError("邀请码已过期")
 
             team_id = row["team_id"]
+
+            # 拒绝跨组织加入
+            self._assert_same_org(conn, team_id, user_id)
 
             # 检查是否已是成员
             existing = conn.execute(

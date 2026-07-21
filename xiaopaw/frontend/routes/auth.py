@@ -125,6 +125,23 @@ async def handle_auth_change_password(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=400)
 
 
+async def handle_org_current(request: web.Request) -> web.Response:
+    """GET /api/frontend/org — get the current user's organization."""
+    user = get_current_user(request)
+    if not user:
+        return web.json_response({"error": "unauthorized"}, status=401)
+
+    user_auth = request.app.get("user_auth")
+    if not user_auth:
+        return web.json_response({"error": "auth not configured"}, status=503)
+
+    org_id = user.get("org_id")
+    org = user_auth.get_org(org_id) if org_id is not None else None
+    if not org:
+        return web.json_response({"error": "organization not found"}, status=404)
+    return web.json_response({"org": org})
+
+
 def register_auth_routes(app: web.Application) -> None:
     """Register auth routes."""
     app.router.add_post("/api/frontend/auth/register", handle_auth_register)
@@ -133,3 +150,4 @@ def register_auth_routes(app: web.Application) -> None:
     app.router.add_get("/api/frontend/auth/me", handle_auth_me)
     app.router.add_put("/api/frontend/auth/profile", handle_auth_update_profile)
     app.router.add_post("/api/frontend/auth/change-password", handle_auth_change_password)
+    app.router.add_get("/api/frontend/org", handle_org_current)

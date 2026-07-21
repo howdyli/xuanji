@@ -356,6 +356,12 @@ async def handle_session_share(request: web.Request) -> web.Response:
     if not store.is_member(int(team_id), user["id"]):
         return _error("not a team member", 403)
 
+    # 纵深防御：目标团队必须与共享者同组织（NULL org 为 legacy 兼容，不阻断）
+    team_org = store.get_team_org_id(int(team_id))
+    user_org = user.get("org_id")
+    if team_org is not None and user_org is not None and team_org != user_org:
+        return _error("cross-organization sharing is not allowed", 403)
+
     pg_store = request.app.get("pg_store")
     if not pg_store or not pg_store._available:
         return _error("database not available", 503)
@@ -366,9 +372,10 @@ async def handle_session_share(request: web.Request) -> web.Response:
             with conn.cursor() as cur:
                 cur.execute(
                     """UPDATE sessions
-                       SET team_id = %s, shared_by = %s, share_permission = %s
+                       SET team_id = %s, shared_by = %s, share_permission = %s,
+                           org_id = COALESCE(org_id, %s)
                        WHERE id = %s""",
-                    (team_id, user["username"], permission, session_id),
+                    (team_id, user["username"], permission, user_org, session_id),
                 )
                 if cur.rowcount == 0:
                     return _error("session not found", 404)

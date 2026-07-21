@@ -398,6 +398,18 @@ async def main() -> None:
                     target_rk = f"p2p:web_{first_user['username']}"
                     pg_store.migrate_legacy_routing_keys(target_rk)
 
+        # Backfill sessions.org_id from the {username -> org_id} map (multi-tenant).
+        if pg_store:
+            try:
+                rk_to_org = {
+                    f"p2p:web_{username}": org_id
+                    for username, org_id in user_auth.all_username_org_map().items()
+                }
+                if rk_to_org:
+                    pg_store.backfill_session_org_ids(rk_to_org)
+            except Exception as exc:
+                logger.warning("sessions.org_id backfill skipped: %s", exc)
+
         # Initialize expert registry (reuses auth.db)
         from xiaopaw.frontend.expert import ExpertRegistry
         expert_registry = ExpertRegistry(data_dir / "auth.db")

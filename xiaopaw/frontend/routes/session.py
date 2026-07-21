@@ -51,10 +51,24 @@ async def handle_message(request: web.Request) -> web.Response:
     if not runner or not session_mgr:
         return web.json_response({"error": "backend not ready"}, status=503)
 
-    # Activate existing session if session_id_hint provided
+    # Activate existing session if session_id_hint provided.
+    # Sessions owned by a *different* routing_key are team-shared: writing to
+    # them requires 'edit' permission. 'view' shares are read-only (403) and
+    # unknown/foreign sessions are hidden (404) to prevent session hijacking
+    # (activate_session would otherwise adopt them into the caller's routing_key).
     if session_id_hint:
         existing = await session_mgr.get_session_by_id(session_id_hint)
         if existing:
+            owning_rk = _find_owning_routing_key(session_mgr, session_id_hint)
+            if owning_rk and owning_rk != routing_key and owning_rk != "p2p:web_user":
+                permission = _resolve_shared_session_permission(request, session_id_hint)
+                if permission is None:
+                    return web.json_response({"error": "not found"}, status=404)
+                if permission != "edit":
+                    return web.json_response(
+                        {"error": "read-only: this shared session grants view access only"},
+                        status=403,
+                    )
             await session_mgr.activate_session(session_id_hint, routing_key)
 
     session = await session_mgr.get_or_create(routing_key)
@@ -109,6 +123,7 @@ async def handle_message(request: web.Request) -> web.Response:
             session_id, routing_key,
             title=content[:80],
             message_count=session.message_count + 2,
+            org_id=user.get("org_id") if user else None,
         )
 
     return web.json_response({
@@ -190,32 +205,76 @@ async def _list_team_shared_sessions(pg_store, team_ids: list[int]) -> list[dict
         return []
 
 
-def _check_team_session_access(request: web.Request, session_id: str) -> bool:
-    """Check if current user can access a session via team sharing.
+def _find_owning_routing_key(session_mgr, session_id: str) -> str | None:
+    """Return the routing_key that owns *session_id*, or None if not found."""
+    for rk, entry in session_mgr._index.items():
+        for s in entry.sessions:
+            if s.id == session_id:
+                return rk
+    return None
 
-    Returns True if the session is shared with one of the user's teams.
+
+def _resolve_shared_session_permission(
+    request: web.Request, session_id: str
+) -> str | None:
+    """Return the current user's share permission for a team-shared session.
+
+    Returns ``"edit"`` or ``"view"`` when *session_id* is shared with one of
+    the current user's teams, else ``None`` (no team-shared access). A NULL or
+    empty ``share_permission`` column is normalized to the safe default
+    ``"view"``.
     """
     team_store = request.app.get("team_store")
     user = get_current_user(request)
     pg_store = request.app.get("pg_store")
     if not team_store or not user or not pg_store:
-        return False
+        return None
 
     team_ids = team_store.get_user_team_ids(user["id"])
     if not team_ids:
-        return False
+        return None
 
     try:
         import psycopg2
         with psycopg2.connect(pg_store._dsn) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT team_id FROM sessions WHERE id = %s AND team_id = ANY(%s)",
+                    "SELECT share_permission, org_id FROM sessions "
+                    "WHERE id = %s AND team_id = ANY(%s)",
                     (session_id, team_ids),
                 )
-                return cur.fetchone() is not None
+                row = cur.fetchone()
+                if not row:
+                    return None
+                # Depth defense (multi-tenant): a shared session must belong to
+                # the caller's org. A NULL org (legacy, pre-backfill) is allowed
+                # for backward compatibility and does not block access.
+                if not _org_visible(row[1], user.get("org_id")):
+                    return None
+                return row[0] or "view"
     except Exception:
-        return False
+        return None
+
+
+def _org_visible(session_org: int | None, user_org: int | None) -> bool:
+    """Return whether a session's org is visible to a caller's org.
+
+    Multi-tenant depth defense: visible only when both orgs are known and
+    equal. A NULL on either side (legacy rows / users pre-backfill) is treated
+    as compatible and does not block access.
+    """
+    if session_org is None or user_org is None:
+        return True
+    return session_org == user_org
+
+
+def _check_team_session_access(request: web.Request, session_id: str) -> bool:
+    """Check if current user can *read* a session via team sharing.
+
+    Read access is granted to both ``view`` and ``edit`` shares, so this is
+    True whenever the session is shared with one of the user's teams.
+    """
+    return _resolve_shared_session_permission(request, session_id) is not None
 
 
 async def handle_session_messages(request: web.Request) -> web.Response:
@@ -239,20 +298,12 @@ async def handle_session_messages(request: web.Request) -> web.Response:
         # frontend cannot distinguish from a real, empty conversation).
         return web.json_response({"error": "not found"}, status=404)
     if session_entry:
-        # SessionManager._index maps routing_key -> RoutingEntry;
-        # find which routing_key owns this session
-        owning_rk = None
-        for rk, entry in session_mgr._index.items():
-            for s in entry.sessions:
-                if s.id == session_id:
-                    owning_rk = rk
-                    break
-            if owning_rk:
-                break
+        # Find which routing_key owns this session; sessions owned by a
+        # *different* routing_key are only accessible via team sharing.
+        owning_rk = _find_owning_routing_key(session_mgr, session_id)
         if owning_rk and owning_rk != routing_key and owning_rk != "p2p:web_user":
             # Check team sharing access
-            team_access = _check_team_session_access(request, session_id)
-            if not team_access:
+            if not _check_team_session_access(request, session_id):
                 return web.json_response({"error": "not found"}, status=404)
 
     try:

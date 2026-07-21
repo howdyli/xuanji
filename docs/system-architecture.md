@@ -384,6 +384,7 @@ App.tsx 核心状态
 |------|------|------|
 | 认证 | `POST /api/frontend/auth/login` / `register` / `logout` | 登录获取 Bearer Token |
 | 认证 | `GET /api/frontend/auth/me` | 当前用户（含 is_admin） |
+| 组织 | `GET /api/frontend/org` | 当前用户所属组织（租户） |
 | 会话 | `GET /api/frontend/sessions` | 会话列表 |
 | 会话 | `GET /api/frontend/sessions/{id}/messages` | 消息历史 |
 | 会话 | `POST /api/frontend/message` | 发送消息 |
@@ -610,6 +611,7 @@ erDiagram
         int team_id "共享目标团队（可空）"
         text shared_by "共享人"
         text share_permission "view / edit"
+        bigint org_id "所属组织（租户隔离，可空）"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -665,17 +667,26 @@ erDiagram
 
 ```mermaid
 erDiagram
+    organizations ||--o{ users : "1:N"
+    organizations ||--o{ teams : "1:N"
     users ||--o{ auth_sessions : "登录 Token"
     users ||--o{ teams : "owns"
     teams ||--o{ team_members : "1:N"
     users ||--o{ team_members : "1:N"
     teams ||--o{ team_invitations : "1:N"
 
+    organizations {
+        integer id PK
+        text name
+        integer owner_id FK "组织所有者"
+    }
+
     users {
         integer id PK
         text username UK
         text password_hash
         integer is_admin "平台管理员（技能审核权限）"
+        integer org_id FK "所属组织（租户）"
     }
 
     auth_sessions {
@@ -689,6 +700,7 @@ erDiagram
         integer id PK
         text name
         integer owner_id FK
+        integer org_id FK "所属组织（继承 owner）"
     }
 
     team_members {
@@ -705,8 +717,10 @@ erDiagram
 ```
 
 - **TeamStore**（`frontend/team.py`）复用 auth.db：WAL 模式并发读，写操作 `threading.Lock` 保护
-- **会话共享跨库关联**：团队实体在 SQLite，共享标记（team_id/shared_by/share_permission）写在 PG `sessions` 表，通过 user_id/username 关联
+- **多租户（组织）**：`组织 → 团队 → 用户`，一人属一组织（`users.org_id`）。升级时创建「默认组织」并回填历史 users/teams；新用户默认加入默认组织。团队创建/加入强制单一组织（跨组织拒绝）
+- **会话共享跨库关联**：团队实体在 SQLite，共享标记（team_id/shared_by/share_permission/org_id）写在 PG `sessions` 表，通过 user_id/username 关联；共享读写解析追加 `org_id` 匹配做纵深防御
 - **is_admin 跨库关联**：管理员身份存于 SQLite，审核对象（community_skills）存于 PG，API 层先验 Token 再查 is_admin
+- **市场全局公共**：`community_skills` 不隔离组织，跨租户共享同一技能市场
 
 ### 9.3 存储分层
 
@@ -853,6 +867,7 @@ tests/
 | 可视化 | 多 Agent 协作可视化（AgentTimeline + SSE 实时推送） | ✅ 已完成 |
 | 协作 | 多用户团队协作（邀请制团队 + 会话共享） | ✅ 已完成 |
 | 生态 | 技能市场生态（发布/审核/上架/安装闭环） | ✅ 已完成 |
-| 后续 | 共享会话 view/edit 权限后端强制校验加固 | 📋 规划中 |
+| 加固 | 共享会话 view/edit 权限后端强制校验 | ✅ 已完成 |
 | 后续 | 技能版本更新纳入审核流程、审核通知 | 📋 规划中 |
-| 远期 | 多租户隔离、技能计费与分成 | 📋 规划中 |
+| 远期 | 多租户隔离基础（组织租户 + sessions.org_id 纵深防御） | ✅ 已完成 |
+| 远期 | 技能计费与分成（定价/购买授权 + 结算/支付网关） | 📋 规划中 |

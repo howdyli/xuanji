@@ -21,7 +21,8 @@ class UserAuth:
 
     Schema
     ------
-    users(id, username, password_hash, created_at)
+    organizations(id, name, owner_id, created_at)
+    users(id, username, password_hash, is_admin, org_id, created_at)
     sessions(id, user_id, token, expires_at, created_at)
     """
 
@@ -31,6 +32,8 @@ class UserAuth:
         self._lock = threading.Lock()
         self._init_db()
         self._init_default_admin()
+        self._init_default_org()
+        self._backfill_org_ids()
 
     # ── schema ────────────────────────────────────────────────────────
 
@@ -76,6 +79,12 @@ class UserAuth:
                     used_at TEXT,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS organizations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    owner_id INTEGER NOT NULL REFERENCES users(id),
+                    created_at TEXT NOT NULL
+                );
             """)
             # Idempotent migration: add is_admin to pre-existing user tables
             cols = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
@@ -83,6 +92,15 @@ class UserAuth:
                 conn.execute(
                     "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0"
                 )
+            # Idempotent migration: add org_id (multi-tenant). SQLite cannot add a
+            # NOT NULL column to a populated table, so add nullable then backfill.
+            if "org_id" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN org_id INTEGER")
+            team_cols = {
+                row[1] for row in conn.execute("PRAGMA table_info(teams)").fetchall()
+            }
+            if "org_id" not in team_cols:
+                conn.execute("ALTER TABLE teams ADD COLUMN org_id INTEGER")
 
     def _init_default_admin(self) -> None:
         with self._connect() as conn:
@@ -99,6 +117,33 @@ class UserAuth:
                     "Change the password immediately!"
                 )
 
+    def _init_default_org(self) -> None:
+        """Create the default organization (owned by the first user) if none exists."""
+        with self._lock, self._connect() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM organizations").fetchone()[0]
+            if count > 0:
+                return
+            owner = conn.execute(
+                "SELECT id FROM users ORDER BY id ASC LIMIT 1"
+            ).fetchone()
+            if not owner:
+                return
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                "INSERT INTO organizations (name, owner_id, created_at) VALUES (?, ?, ?)",
+                ("默认组织", owner[0], now),
+            )
+            logger.info("auth: created default organization (owner_id=%s)", owner[0])
+
+    def _backfill_org_ids(self) -> None:
+        """Assign the default org to any users/teams still missing org_id."""
+        org_id = self.get_default_org_id()
+        if org_id is None:
+            return
+        with self._lock, self._connect() as conn:
+            conn.execute("UPDATE users SET org_id = ? WHERE org_id IS NULL", (org_id,))
+            conn.execute("UPDATE teams SET org_id = ? WHERE org_id IS NULL", (org_id,))
+
     # ── public API ────────────────────────────────────────────────────
 
     def register(self, username: str, password: str) -> tuple[str, dict]:
@@ -114,12 +159,13 @@ class UserAuth:
 
         pw_hash = self._hash_password(password)
         now = datetime.now(timezone.utc).isoformat()
+        default_org_id = self.get_default_org_id()
 
         with self._lock, self._connect() as conn:
             try:
                 conn.execute(
-                    "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
-                    (username, pw_hash, now),
+                    "INSERT INTO users (username, password_hash, org_id, created_at) VALUES (?, ?, ?, ?)",
+                    (username, pw_hash, default_org_id, now),
                 )
             except sqlite3.IntegrityError:
                 raise ValueError("用户名已存在")
@@ -204,7 +250,7 @@ class UserAuth:
         """Get user info by id."""
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, username, is_admin, created_at FROM users WHERE id = ?",
+                "SELECT id, username, is_admin, org_id, created_at FROM users WHERE id = ?",
                 (user_id,),
             ).fetchone()
         if not row:
@@ -213,8 +259,60 @@ class UserAuth:
             "id": row[0],
             "username": row[1],
             "is_admin": bool(row[2]),
-            "created_at": row[3],
+            "org_id": row[3],
+            "created_at": row[4],
         }
+
+    # ── organizations (multi-tenant) ──────────────────────────────────
+
+    def get_default_org_id(self) -> int | None:
+        """Return the default organization id (lowest id), or None if none exists."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM organizations ORDER BY id ASC LIMIT 1"
+            ).fetchone()
+        return row[0] if row else None
+
+    def get_org(self, org_id: int) -> dict | None:
+        """Get organization info by id."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, name, owner_id, created_at FROM organizations WHERE id = ?",
+                (org_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {"id": row[0], "name": row[1], "owner_id": row[2], "created_at": row[3]}
+
+    def create_organization(self, name: str, owner_id: int) -> dict:
+        """Create a new organization. Returns the org dict."""
+        name = name.strip()
+        if not name or len(name) < 2 or len(name) > 40:
+            raise ValueError("组织名称需要 2-40 个字符")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO organizations (name, owner_id, created_at) VALUES (?, ?, ?)",
+                (name, owner_id, now),
+            )
+            org_id = cur.lastrowid
+        return {"id": org_id, "name": name, "owner_id": owner_id, "created_at": now}
+
+    def set_user_org(self, user_id: int, org_id: int) -> bool:
+        """Move a user into an organization."""
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE users SET org_id = ? WHERE id = ?", (org_id, user_id)
+            )
+        return cur.rowcount > 0
+
+    def all_username_org_map(self) -> dict[str, int]:
+        """Return {username: org_id} for all users with an org (startup backfill)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT username, org_id FROM users WHERE org_id IS NOT NULL"
+            ).fetchall()
+        return {r[0]: r[1] for r in rows}
 
     def get_user_by_token(self, token: str) -> dict | None:
         """Get user info from a valid session token."""
