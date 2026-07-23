@@ -50,6 +50,15 @@ SAFE_TOOLS: frozenset[str] = frozenset({
 })
 
 
+# 权限强弱序：deny 最严，allow 最松。角色叠加只会"收紧"不会"放松"。
+_PERMISSION_STRICTNESS = {"allow": 0, "warn": 1, "deny": 2}
+
+
+def _strictest(a: str, b: str) -> str:
+    """返回两个权限里更严格的那个（deny > warn > allow）。"""
+    return a if _PERMISSION_STRICTNESS.get(a, 1) >= _PERMISSION_STRICTNESS.get(b, 1) else b
+
+
 class PermissionGate:
     def __init__(
         self,
@@ -57,6 +66,7 @@ class PermissionGate:
         default: str = "warn",
         audit=None,
         mode: str = PermissionMode.AUTO,
+        roles: dict[str, dict] | None = None,
     ):
         self._tool_permissions: dict[str, str] = {
             k.lower(): v.lower() for k, v in (tools or {}).items()
@@ -64,7 +74,26 @@ class PermissionGate:
         self._default = default.lower()
         self._audit = audit
         self._mode = mode
+        # 细粒度 RBAC：role -> {"default": str, "tools": {tool: perm}}
+        # 角色叠加只在基础权限之上"收紧"，缺省为空 => 行为与旧版完全一致。
+        self._role_permissions: dict[str, dict] = self._normalize_roles(roles)
         self.decisions: deque[dict] = deque(maxlen=10000)
+
+    @staticmethod
+    def _normalize_roles(roles: dict[str, dict] | None) -> dict[str, dict]:
+        """小写化角色名/工具名/权限值，容忍缺省字段。"""
+        normalized: dict[str, dict] = {}
+        for role_name, spec in (roles or {}).items():
+            spec = spec or {}
+            role_tools = {
+                k.lower(): str(v).lower()
+                for k, v in (spec.get("tools", {}) or {}).items()
+            }
+            entry: dict = {"tools": role_tools}
+            if spec.get("default") is not None:
+                entry["default"] = str(spec["default"]).lower()
+            normalized[role_name.lower()] = entry
+        return normalized
 
     @classmethod
     def from_yaml(cls, path: Path, audit=None):
@@ -80,6 +109,7 @@ class PermissionGate:
             tools=perms.get("tools", {}),
             default=perms.get("default", "warn"),
             audit=audit,
+            roles=perms.get("roles", {}),
         )
 
     def set_mode(self, mode: str) -> None:
@@ -116,6 +146,20 @@ class PermissionGate:
         permission = self._tool_permissions.get(tool, self._default)
         policy_source = "explicit" if tool in self._tool_permissions else "default"
 
+        # ---- 细粒度 RBAC 角色叠加（仅收紧）----
+        # 规则：取 base 与 role 里更严格的那个，确保角色只能降权、不能提权。
+        role = (getattr(ctx, "role", "") or "").lower()
+        role_spec = self._role_permissions.get(role) if role else None
+        if role_spec is not None:
+            role_perm = role_spec["tools"].get(tool)
+            if role_perm is None:
+                role_perm = role_spec.get("default")
+            if role_perm is not None:
+                tightened = _strictest(permission, role_perm)
+                if tightened != permission:
+                    permission = tightened
+                    policy_source = f"role:{role}"
+
         # ---- 权限模式覆盖 ----
         if self._mode == PermissionMode.BYPASS_PERMISSIONS:
             # bypass 模式：deny 仍然生效（安全底线），其他全部放行
@@ -140,6 +184,7 @@ class PermissionGate:
             "permission": permission,
             "policy_source": policy_source,
             "mode": self._mode,
+            "role": role,
         }
         self.decisions.append(decision)
 

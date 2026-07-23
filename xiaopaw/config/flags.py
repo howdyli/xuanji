@@ -22,3 +22,6 @@ class FeatureFlags(BaseModel):
     enable_inbound_rate_limit: bool = True
     enable_pgvector_rls: bool = False
     enable_pgvector_connection_pool: bool = True
+    # P3-1: opt-in planner→executor→reviewer multi-agent collaboration pipeline.
+    # Default off; the single-agent orchestrator path is unchanged when disabled.
+    enable_multi_agent_collab: bool = False

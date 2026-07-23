@@ -107,6 +107,7 @@ class HookContext:
     session_id: str = ""
     turn_number: int = 0
     sender_id: str = ""
+    role: str = ""  # 调用方 RBAC 角色（admin/editor/viewer 等），空 = 未知/不参与角色判定
     metadata: dict = field(default_factory=dict)
 
     def __post_init__(self):

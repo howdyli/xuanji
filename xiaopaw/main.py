@@ -160,6 +160,74 @@ def _build_sender(cfg, is_dev: bool):
     )
 
 
+async def _probe_sandbox(sandbox_url: str, timeout_s: float = 3.0) -> bool:
+    """Best-effort reachability probe for the AIO-Sandbox MCP endpoint.
+
+    Skill execution (Sub-Crew) depends on the sandbox being up. When it is not,
+    tool calls can hang for minutes before timing out (see README FAQ #2). We
+    probe the sandbox origin at startup so the operator gets an immediate,
+    explicit signal instead of a silent failure surfacing mid-conversation.
+
+    Returns True if the endpoint answered (any HTTP status), False otherwise.
+    """
+    if not sandbox_url or not sandbox_url.startswith(("http://", "https://")):
+        logger.warning(
+            "sandbox url is empty or malformed (%r); skill execution will be UNAVAILABLE",
+            sandbox_url,
+        )
+        return False
+    try:
+        import aiohttp
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(sandbox_url)
+        origin = f"{parts.scheme}://{parts.netloc}/"
+        timeout = aiohttp.ClientTimeout(total=timeout_s)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(origin) as resp:
+                logger.info(
+                    "sandbox reachable at %s (HTTP %d); skill execution enabled",
+                    origin, resp.status,
+                )
+                return True
+    except Exception as exc:
+        logger.warning(
+            "\n"
+            "==================================================================\n"
+            " SANDBOX UNREACHABLE at %s (%s: %s)\n"
+            " -> Skill execution (Sub-Crew) will be UNAVAILABLE.\n"
+            " -> Reference/chat still work, but task skills (search/pdf/docx/\n"
+            "    memory-save/web_browse/...) cannot run.\n"
+            " -> Start it with: docker compose -f sandbox-docker-compose.yaml up -d\n"
+            "==================================================================",
+            sandbox_url, type(exc).__name__, exc,
+        )
+        return False
+
+
+def _log_degraded_features(cfg) -> None:
+    """Emit prominent warnings for silently-disabled features at startup.
+
+    The frontend layer (vector memory / community skills / notifications) only
+    activates when a PostgreSQL DSN is configured. Without it the app still
+    boots, but those capabilities are silently absent -- surface that clearly.
+    """
+    if cfg.frontend.enabled and not cfg.memory.db_dsn:
+        logger.warning(
+            "\n"
+            "==================================================================\n"
+            " PostgreSQL DSN not configured (memory.db_dsn is empty).\n"
+            " The following features are DISABLED:\n"
+            "   - L21 vector memory search (search_memory skill)\n"
+            "   - Community skill marketplace (publish/review/favorite)\n"
+            "   - In-app notifications (skill approve/reject)\n"
+            "   - Cross-session activity persistence (PG-backed)\n"
+            " To enable: set MEMORY_DB_DSN and run `psql \"$MEMORY_DB_DSN\" -f schema.sql`\n"
+            " (requires the pgvector extension: CREATE EXTENSION IF NOT EXISTS vector)\n"
+            "==================================================================",
+        )
+
+
 async def main() -> None:
     config_path = Path(os.environ.get("XIAOPAW_CONFIG", "config.yaml"))
     cfg = load_config(config_path)
@@ -177,6 +245,9 @@ async def main() -> None:
     )
 
     assert_all_production_safe(cfg, is_dev=is_dev)
+
+    # Surface silently-disabled features (e.g. no PG DSN) with a loud warning.
+    _log_degraded_features(cfg)
 
     # Pre-warm CrewAI storage directory to prevent "unable to open database file"
     # in sub-threads (ThreadPoolExecutor) where CWD may differ.
@@ -395,6 +466,15 @@ async def main() -> None:
         # Initialize team store (reuses auth.db)
         team_store = TeamStore(data_dir / "auth.db")
 
+        # Wire RBAC role resolution now that the user store exists. Only
+        # frontend-originated messages carry a username in sender_id; feishu
+        # open_ids and system actors (cron) resolve to "" (no role), so the
+        # permission_gate behaves exactly as before unless roles are configured.
+        from xiaopaw.frontend.rbac import resolve_rbac_role
+        runner.set_role_resolver(
+            lambda inbound: resolve_rbac_role(user_auth, getattr(inbound, "sender_id", ""))
+        )
+
         # Migrate legacy p2p:web_user sessions to first user's routing_key
         if pg_store:
             user_count = user_auth.get_user_count() if hasattr(user_auth, 'get_user_count') else 1
@@ -482,6 +562,10 @@ async def main() -> None:
         await feishu_listener.start()
 
     logger.info("玄机 started (env=%s)", "dev" if is_dev else "production")
+
+    # Best-effort sandbox reachability probe (non-fatal). Logs a loud warning
+    # if skill execution will be unavailable so it is not discovered mid-turn.
+    await _probe_sandbox(cfg.sandbox.url)
 
     # Wait for shutdown signal
     stop = asyncio.Event()

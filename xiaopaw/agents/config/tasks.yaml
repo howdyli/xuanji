@@ -12,6 +12,30 @@ main_task:
     - reply: 发送给用户的回复内容（中文，友好自然）
     - used_skills: 本次调用的 Skill 名称列表（可为空列表）
 
+# P3-1 多 Agent 协作管线的前置/后置任务（仅 enable_multi_agent_collab=true 时使用）。
+# plan_task → main_task(context=plan_task) → review_task(context=main_task)，
+# 前置任务产出通过 CrewAI context 自动注入后置任务。
+plan_task:
+  description: >
+    用户请求：
+    {user_message}
+
+    请输出一份简洁的分步执行计划（3-6 步），每步说明目标与预期产出。
+    只做规划，不要执行、不要调用工具。
+  expected_output: >
+    Markdown 有序列表形式的分步计划，每步一行，含目标与产出说明。
+
+review_task:
+  description: >
+    请基于「用户原始请求」「规划者的计划」「执行者的执行结果」进行审查：
+    - 执行结果是否覆盖计划要点、是否回应用户真实意图；
+    - 如有遗漏/错误，请在最终回复中补充或修正。
+    然后产出最终面向用户的回复。
+  expected_output: >
+    JSON 格式，包含：
+    - reply: 发送给用户的最终回复内容（中文，友好自然）
+    - used_skills: 本次调用的 Skill 名称列表（可为空列表）
+
 skill_task:
   description: >
     执行以下任务：

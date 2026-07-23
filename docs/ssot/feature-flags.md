@@ -21,6 +21,7 @@
 | F10 | `enable_inbound_rate_limit` | bool | `true` | T7 DoS | 中 | ✅ | `xiaopaw_rate_limited_total` |
 | F11 | `enable_pgvector_rls` | bool | `false`（单租户） / `true`（多租户 prod） | T11 routing_key 泄露（DB 层兜底） | 低 | ❌（需 SQL 切换 + 重启） | N/A |
 | F12 | `enable_pgvector_connection_pool` | bool | `true` | 性能（v2 新增） | 低 | ❌（需重启 indexer） | `xiaopaw_pgvector_pool_size` |
+| F13 | `enable_multi_agent_collab` | bool | `false` | P3-1 多 Agent 协作（规划→执行→审查，opt-in） | 低（关闭=单 Agent 路径） | ❌（Crew 构造时固化） | N/A |
 
 ---
 
@@ -35,6 +36,7 @@
 ### 语义变更
 - **F1 `token_counter_mode`**：v2.0 列为二值（qwen_official / rough），v2.1 扩为三值，覆盖 HuggingFace fallback。
 - **F12 `enable_pgvector_connection_pool`**：v2.0 的 03-data 列但 09-config 未列，v2.1 补进注册表。
+- **F13 `enable_multi_agent_collab`（第二增量：记忆/观测精细集成）**：开启后 `before_llm_hook` 依据 `context.agent.role` 解析真实角色（orchestrator/planner/reviewer）——langfuse/audit/EventBus 据此正确归因每次 LLM 调用；会话恢复、上下文剪裁/压缩与索引记账仅对执行者（orchestrator）生效，planner/reviewer 为每轮临时推理角色，不拥有也不改写持久会话。关闭时单 Agent 路径行为字节级不变。
 
 ---
 

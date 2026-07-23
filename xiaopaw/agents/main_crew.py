@@ -29,11 +29,11 @@ from xiaopaw.llm.aliyun_llm import AliyunLLM
 from xiaopaw.llm.model_router import model_router  # ✅ P2-1: 多模型路由器
 from xiaopaw.memory.bootstrap import build_bootstrap_prompt
 from xiaopaw.memory.context_mgmt import (
-    append_session_raw,
+    append_session_raw_async,
     load_session_ctx,
     maybe_compress,
     prune_tool_results,
-    save_session_ctx,
+    save_session_ctx_async,
 )
 from xiaopaw.memory.indexer import async_index_turn
 from xiaopaw.models import SenderProtocol
@@ -75,6 +75,39 @@ def _normalize_tool_input(tool_input: dict) -> None:
         elif val in _PY_FALSE_STRINGS:
             tool_input[key] = False
 
+
+# Canonical role label for the executor agent. Any direct/unknown LLM call also
+# maps here, so the single-agent path and its observability traces are unchanged.
+_EXECUTOR_ROLE_LABEL = "orchestrator"
+
+
+def _build_role_label_map(agents_cfg: dict[str, Any]) -> dict[str, str]:
+    """Map each agent's configured ``role`` string → its canonical yaml key.
+
+    e.g. ``{"xuanji 工作助手": "orchestrator", "任务规划专家": "planner", ...}``.
+    Templated roles (skill_agent's ``"{skill_name_upper} ..."``) are skipped —
+    they belong to a different crew and are resolved per-skill.
+    """
+    out: dict[str, str] = {}
+    for key, spec in agents_cfg.items():
+        role = spec.get("role") if isinstance(spec, dict) else None
+        if isinstance(role, str) and "{" not in role:
+            out[role.strip()] = key
+    return out
+
+
+def _resolve_agent_role_label(
+    agent: Any, role_map: dict[str, str], default: str = _EXECUTOR_ROLE_LABEL
+) -> str:
+    """Resolve the executing agent's canonical role label for observability.
+
+    Falls back to ``default`` ("orchestrator") for direct/unknown LLM calls so the
+    single-agent path stays labeled exactly as before.
+    """
+    role_str = getattr(agent, "role", "") if agent is not None else ""
+    if not role_str:
+        return default
+    return role_map.get(str(role_str).strip(), default)
 
 
 def _make_step_callback(
@@ -161,6 +194,7 @@ class MemoryAwareCrew:
         self._turn_start_ts = int(time.time() * 1000)
 
         self._index_coroutine: Coroutine | None = None
+        self._role_label_map_cache: dict[str, str] | None = None
 
     @agent
     def orchestrator(self) -> Agent:
@@ -228,32 +262,80 @@ class MemoryAwareCrew:
         # task_callback：Task 完成时触发 → TASK_COMPLETE + pending_deny 重抛（最后一道防线）
         # 这是 33 课课文里"+2 处接线"的具体落点。
         adapter = get_current_adapter()
+        task_cb = adapter.make_task_callback() if adapter else None
+
+        # P3-1: opt-in planner→executor→reviewer pipeline. Default off keeps the
+        # single-agent path (self.agents / self.tasks) exactly as before.
+        if getattr(self._flags, "enable_multi_agent_collab", False):
+            from xiaopaw.agents.collab_crew import build_collab_crew
+
+            agents_cfg = yaml.safe_load(
+                (_CONFIG_DIR / "agents.yaml").read_text(encoding="utf-8")
+            )
+            tasks_cfg = yaml.safe_load(
+                (_CONFIG_DIR / "tasks.yaml").read_text(encoding="utf-8")
+            )
+            return build_collab_crew(
+                executor_agent=self.orchestrator(),
+                main_task=self.main_task(),
+                llm_factory=model_router.get_llm,
+                agents_cfg=agents_cfg,
+                tasks_cfg=tasks_cfg,
+                output_pydantic=MainTaskOutput,
+                step_callback=self._step_callback,
+                task_callback=task_cb,
+                verbose=self._verbose,
+            )
+
         return Crew(
             agents=self.agents,
             tasks=self.tasks,
             process=Process.sequential,
             verbose=self._verbose,
             step_callback=self._step_callback,
-            task_callback=adapter.make_task_callback() if adapter else None,
+            task_callback=task_cb,
         )
+
+    def _role_label_map(self) -> dict[str, str]:
+        """Lazily build & cache role-string → canonical-label map from agents.yaml."""
+        if self._role_label_map_cache is None:
+            agents_cfg = yaml.safe_load(
+                (_CONFIG_DIR / "agents.yaml").read_text(encoding="utf-8")
+            )
+            self._role_label_map_cache = _build_role_label_map(agents_cfg)
+        return self._role_label_map_cache
 
     @before_llm_call
     def before_llm_hook(self, context: LLMCallHookContext) -> bool | None:
-        if not self._session_loaded:
-            self._restore_session(context)
-            self._session_loaded = True
-        self._last_msgs = context.messages
-        len_before = len(context.messages)
-        prune_tool_results(context.messages, keep_turns=self._prune_keep_turns)
-        maybe_compress(
-            context.messages,
-            model_limit=self._flags.context_window_tokens
-            if hasattr(self._flags, "context_window_tokens")
-            else 32000,
+        # Which agent is calling? Single-agent mode is always the orchestrator;
+        # the collab pipeline adds planner/reviewer, whose LLM calls must be
+        # attributed correctly — langfuse/audit/EventBus all key off this label.
+        role_label = _resolve_agent_role_label(
+            getattr(context, "agent", None), self._role_label_map()
         )
-        len_after = len(context.messages)
-        if len_after < len_before:
-            self._history_len = max(0, self._history_len - (len_before - len_after))
+
+        # Session restore, context prune/compress and index bookkeeping belong to
+        # the EXECUTOR (orchestrator), which owns the persisted conversation. The
+        # planner/reviewer are ephemeral per-turn reasoners; in collab mode the
+        # planner is the FIRST LLM call, so restoring history into it (and setting
+        # _session_loaded) would starve the executor. Gate all of it on the
+        # executor role — this is a no-op change for the single-agent path.
+        if role_label == _EXECUTOR_ROLE_LABEL:
+            if not self._session_loaded:
+                self._restore_session(context)
+                self._session_loaded = True
+            self._last_msgs = context.messages
+            len_before = len(context.messages)
+            prune_tool_results(context.messages, keep_turns=self._prune_keep_turns)
+            maybe_compress(
+                context.messages,
+                model_limit=self._flags.context_window_tokens
+                if hasattr(self._flags, "context_window_tokens")
+                else 32000,
+            )
+            len_after = len(context.messages)
+            if len_after < len_before:
+                self._history_len = max(0, self._history_len - (len_before - len_after))
 
         adapter = get_current_adapter()
         if adapter:
@@ -263,7 +345,7 @@ class MemoryAwareCrew:
                 if isinstance(llm_model, str) and "/" in llm_model:
                     llm_model = llm_model.rsplit("/", 1)[-1]
             adapter.on_before_llm(
-                agent_role="orchestrator",
+                agent_role=role_label,
                 messages=context.messages,
                 model=llm_model,
             )
@@ -322,8 +404,11 @@ class MemoryAwareCrew:
                     raise  # non-retryable or exhausted retries
 
             new_msgs = self._last_msgs[self._history_len:] if self._last_msgs else []
-            append_session_raw(self.session_id, new_msgs, self._ctx_dir)
-            save_session_ctx(self.session_id, list(self._last_msgs), self._ctx_dir)
+            # Non-blocking file I/O: run_and_index runs on the event loop, so use
+            # the async (asyncio.to_thread) variants to avoid stalling other
+            # concurrent sessions on disk writes.
+            await append_session_raw_async(self.session_id, new_msgs, self._ctx_dir)
+            await save_session_ctx_async(self.session_id, list(self._last_msgs), self._ctx_dir)
 
             used_skills: list[str] = []
             try:

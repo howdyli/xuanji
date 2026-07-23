@@ -6,6 +6,7 @@
  * 标签：按领域着色 + 小图标前缀 + 状态变体（普通/推荐/热门）
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { apiFetch } from '../api/client'
 
 const API_BASE = '/api/frontend'
 
@@ -493,13 +494,7 @@ function ExpertFormDialog({
     try {
       const url = isEdit ? `${API_BASE}/experts/${encodeURIComponent(name)}` : `${API_BASE}/experts`
       const method = isEdit ? 'PUT' : 'POST'
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
-        body: JSON.stringify(payload),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) { setErr(data?.error || `保存失败 (${res.status})`); return }
+      await apiFetch(url, { method, json: payload })
       onSaved()
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
@@ -628,8 +623,6 @@ export function ExpertManagerView({ authToken, activeExpert, onSelectExpert }: E
   const [toast, setToast] = useState('')
   const [err, setErr] = useState('')
 
-  const authHeaders = useMemo(() => ({ Authorization: `Bearer ${authToken}` }), [authToken])
-
   const fireToast = useCallback((msg: string) => {
     setToast(msg)
     window.setTimeout(() => setToast(''), 2400)
@@ -640,24 +633,21 @@ export function ExpertManagerView({ authToken, activeExpert, onSelectExpert }: E
       const url = activeCategory
         ? `${API_BASE}/experts?category=${encodeURIComponent(activeCategory)}`
         : `${API_BASE}/experts`
-      const res = await fetch(url, { headers: authHeaders })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok && data?.experts) setExperts(data.experts)
-      else if (!res.ok) setErr(data?.error || `加载失败 (${res.status})`)
+      const data = await apiFetch<{ experts?: Expert[] }>(url)
+      if (data.experts) setExperts(data.experts)
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
-  }, [authHeaders, activeCategory])
+  }, [activeCategory])
 
   const loadCategories = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/experts/categories`, { headers: authHeaders })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok && data?.categories) setCategories(data.categories)
+      const data = await apiFetch<{ categories?: Category[] }>(`${API_BASE}/experts/categories`)
+      if (data.categories) setCategories(data.categories)
     } catch { /* ignore */ }
-  }, [authHeaders])
+  }, [])
 
   useEffect(() => { loadExperts(); loadCategories() }, [loadExperts, loadCategories])
 
@@ -676,21 +666,14 @@ export function ExpertManagerView({ authToken, activeExpert, onSelectExpert }: E
   const handleDelete = useCallback(async (name: string) => {
     if (!confirm(`确定删除专家「${name}」？`)) return
     try {
-      const res = await fetch(`${API_BASE}/experts/${encodeURIComponent(name)}`, {
-        method: 'DELETE',
-        headers: authHeaders,
-      })
-      if (res.ok) {
-        fireToast('已删除')
-        setDetail(null)
-        if (activeExpert === name) onSelectExpert(null)
-        await loadExperts()
-        await loadCategories()
-      } else {
-        fireToast('删除失败')
-      }
+      await apiFetch(`${API_BASE}/experts/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      fireToast('已删除')
+      setDetail(null)
+      if (activeExpert === name) onSelectExpert(null)
+      await loadExperts()
+      await loadCategories()
     } catch { fireToast('删除失败') }
-  }, [authHeaders, fireToast, loadExperts, loadCategories, activeExpert, onSelectExpert])
+  }, [fireToast, loadExperts, loadCategories, activeExpert, onSelectExpert])
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-gray-50/40">

@@ -4,6 +4,7 @@
  * 选择目标团队 + 权限（查看/可编辑），将当前会话共享给团队。
  */
 import { useState, useEffect } from 'react'
+import { apiFetch } from '../api/client'
 
 interface Team {
   id: number
@@ -27,10 +28,7 @@ export default function ShareDialog({ sessionId, authToken, onClose, onShared }:
   const [error, setError] = useState('')
 
   useEffect(() => {
-    fetch('/api/frontend/teams', {
-      headers: { Authorization: `Bearer ${authToken}` },
-    })
-      .then(r => r.json())
+    apiFetch<{ teams?: Team[] }>('/api/frontend/teams')
       .then(data => { setTeams(data.teams || []); setLoading(false) })
       .catch(() => setLoading(false))
   }, [authToken])
@@ -40,18 +38,10 @@ export default function ShareDialog({ sessionId, authToken, onClose, onShared }:
     setSubmitting(true)
     setError('')
     try {
-      const res = await fetch(`/api/frontend/sessions/${sessionId}/share`, {
+      await apiFetch(`/api/frontend/sessions/${sessionId}/share`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({ team_id: selectedTeamId, permission }),
+        json: { team_id: selectedTeamId, permission },
       })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data.error || '共享失败')
-      }
       onShared?.()
       onClose()
     } catch (e) {

@@ -85,11 +85,12 @@ class CrewObservabilityAdapter:
     - _tool_start_times：(tool_name, turn) → start_time，用来算工具耗时
     """
 
-    def __init__(self, registry: HookRegistry, session_id: str = "", event_bus: "EventBus | None" = None, turn_id: str = ""):
+    def __init__(self, registry: HookRegistry, session_id: str = "", event_bus: "EventBus | None" = None, turn_id: str = "", role: str = ""):
         self._registry = registry
         self._session_id = session_id
         self._event_bus = event_bus
         self._turn_id = turn_id
+        self._role = role
         self._turn_count = 0
         self._current_turn_has_llm = False
         self._cleaned = False
@@ -113,6 +114,7 @@ class CrewObservabilityAdapter:
                 session_id=self._session_id,
                 turn_number=self._turn_count,
                 sender_id=sender_id,
+                role=self._role,
                 metadata={"user_message": _truncate(user_message, 500)},
             ),
         )
@@ -187,6 +189,7 @@ class CrewObservabilityAdapter:
             tool_input=input_dict,
             session_id=self._session_id,
             turn_number=self._turn_count,
+            role=self._role,
         )
         # EventBus: TOOL_CALL_START
         if self._event_bus:

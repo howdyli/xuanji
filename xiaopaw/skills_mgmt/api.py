@@ -807,7 +807,8 @@ async def handle_community_list_skills(request: web.Request) -> web.Response:
     except ValueError:
         return _err("bad_request", "page and size must be integers", status=400)
     result = registry.list_skills(
-        search=search, category=category, sort=sort, page=page, page_size=size
+        search=search, category=category, sort=sort, page=page, page_size=size,
+        viewer_org_id=user.get("org_id"),
     )
     return web.json_response(result)
 
@@ -821,7 +822,7 @@ async def handle_community_get_skill(request: web.Request) -> web.Response:
     if not registry:
         return _err("community_unavailable", status=503)
     name = request.match_info["name"]
-    skill = registry.get_skill(name)
+    skill = registry.get_skill(name, viewer_org_id=user.get("org_id"))
     if not skill:
         return _err("not_found", "skill not found", status=404)
     return web.json_response(skill)
@@ -837,11 +838,14 @@ async def handle_community_install_skill(request: web.Request) -> web.Response:
         return _err("community_unavailable", status=503)
     name = request.match_info["name"]
     try:
-        installed_name = await registry.install_skill(name, user_id=str(user["id"]))
+        installed_name = await registry.install_skill(
+            name, user_id=str(user["id"]), viewer_org_id=user.get("org_id")
+        )
     except CommunityError as exc:
         status = {
             "not_found": 404,
             "no_install_url": 404,
+            "forbidden": 403,
             "download_failed": 502,
             "empty_archive": 502,
             "hash_mismatch": 409,
@@ -876,7 +880,7 @@ async def handle_community_get_rankings(request: web.Request) -> web.Response:
     period = request.query.get("period", "week")
     if period not in ("week", "month", "all"):
         return _err("bad_request", "period must be week|month|all", status=400)
-    rankings = registry.get_rankings(period=period)
+    rankings = registry.get_rankings(period=period, viewer_org_id=user.get("org_id"))
     return web.json_response({"rankings": rankings})
 
 
@@ -888,7 +892,7 @@ async def handle_community_get_featured(request: web.Request) -> web.Response:
     registry = _get_community(request)
     if not registry:
         return _err("community_unavailable", status=503)
-    featured = registry.get_featured()
+    featured = registry.get_featured(viewer_org_id=user.get("org_id"))
     return web.json_response({"skills": featured})
 
 
@@ -1019,9 +1023,10 @@ async def handle_community_publish_skill(request: web.Request) -> web.Response:
             publisher=user["username"],
             metadata=metadata,
             zip_path=tmp_path,
+            owner_org_id=user.get("org_id"),
         )
     except CommunityError as exc:
-        status = {"duplicate_name": 409, "missing_name": 400}.get(exc.code, 422)
+        status = {"duplicate_name": 409, "missing_name": 400, "no_org": 400}.get(exc.code, 422)
         return _err(exc.code, exc.message, status=status)
     except ValidationError as exc:
         return _err(exc.code, exc.message, status=422)

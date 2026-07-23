@@ -5,6 +5,7 @@
  *       邀请码生成/复制、加入团队。
  */
 import { useState, useEffect, useCallback } from 'react'
+import { apiFetch } from '../api/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -33,26 +34,6 @@ interface Invitation {
 
 interface TeamPanelProps {
   authToken: string
-}
-
-// ─── API helpers ──────────────────────────────────────────────────────────
-
-const API = '/api/frontend'
-
-async function apiFetch(path: string, authToken: string, options?: RequestInit) {
-  const res = await fetch(`${API}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${authToken}`,
-      ...options?.headers,
-    },
-  })
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}))
-    throw new Error(data.error || `请求失败 (${res.status})`)
-  }
-  return res.json()
 }
 
 // ─── Role Badge ───────────────────────────────────────────────────────────
@@ -101,7 +82,7 @@ export default function TeamPanel({ authToken }: TeamPanelProps) {
 
   const fetchTeams = useCallback(async () => {
     try {
-      const data = await apiFetch('/teams', authToken)
+      const data = await apiFetch<{ teams?: Team[] }>('/teams')
       setTeams(data.teams || [])
       setError('')
     } catch (e) {
@@ -116,9 +97,9 @@ export default function TeamPanel({ authToken }: TeamPanelProps) {
   const handleCreate = async () => {
     if (!newName.trim()) return
     try {
-      await apiFetch('/teams', authToken, {
+      await apiFetch('/teams', {
         method: 'POST',
-        body: JSON.stringify({ name: newName, description: newDesc }),
+        json: { name: newName, description: newDesc },
       })
       setNewName('')
       setNewDesc('')
@@ -132,9 +113,9 @@ export default function TeamPanel({ authToken }: TeamPanelProps) {
   const handleJoin = async () => {
     if (!joinCode.trim()) return
     try {
-      await apiFetch('/teams/join', authToken, {
+      await apiFetch('/teams/join', {
         method: 'POST',
-        body: JSON.stringify({ code: joinCode.trim() }),
+        json: { code: joinCode.trim() },
       })
       setJoinCode('')
       setShowJoin(false)
@@ -146,7 +127,7 @@ export default function TeamPanel({ authToken }: TeamPanelProps) {
 
   const handleViewTeam = async (team: Team) => {
     try {
-      const data = await apiFetch(`/teams/${team.id}`, authToken)
+      const data = await apiFetch<{ team: Team }>(`/teams/${team.id}`)
       setSelectedTeam(data.team)
       setInvitation(null)
     } catch (e) {
@@ -157,7 +138,7 @@ export default function TeamPanel({ authToken }: TeamPanelProps) {
   const handleInvite = async () => {
     if (!selectedTeam) return
     try {
-      const data = await apiFetch(`/teams/${selectedTeam.id}/invitations`, authToken, {
+      const data = await apiFetch<{ invitation: Invitation }>(`/teams/${selectedTeam.id}/invitations`, {
         method: 'POST',
       })
       setInvitation(data.invitation)
@@ -177,7 +158,7 @@ export default function TeamPanel({ authToken }: TeamPanelProps) {
   const handleRemoveMember = async (uid: number) => {
     if (!selectedTeam) return
     try {
-      await apiFetch(`/teams/${selectedTeam.id}/members/${uid}`, authToken, { method: 'DELETE' })
+      await apiFetch(`/teams/${selectedTeam.id}/members/${uid}`, { method: 'DELETE' })
       handleViewTeam(selectedTeam)
     } catch (e) {
       setError(e instanceof Error ? e.message : '移除失败')

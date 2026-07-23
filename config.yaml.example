@@ -98,3 +98,4 @@ feature_flags:
   enable_memory_save_filter: true
   enable_webhook_replay_cache: true
   enable_inbound_rate_limit: true
+  enable_multi_agent_collab: false  # P3-1: 开启后走 规划→执行→审查 三角色管线

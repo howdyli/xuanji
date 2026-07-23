@@ -364,11 +364,31 @@ class SkillLoaderTool(BaseTool):
         except yaml.YAMLError:
             return content[:200]
 
+    def _instruction_cache_key(self, skill_name: str) -> str:
+        """Cache key must include every session-scoped value baked into the
+        rendered instructions (session dir, routing key, sandbox mount).
+
+        The cache is a process-wide singleton shared across sessions, so keying
+        on ``skill_name`` alone would leak one session's paths/routing_key into
+        another session that loads the same skill.
+        """
+        return "\x00".join(
+            (
+                skill_name,
+                self._session_id or "",
+                self._routing_key or "",
+                "1" if self._sandbox_url else "0",
+            )
+        )
+
     def _get_skill_instructions(self, skill_name: str) -> str:
         # ✅ P1 集成：优先从 LRU 缓存读取（减少 80% 磁盘 I/O）
-        if _PERF_AVAILABLE and skill_name in skill_instruction_cache._cache:
-            logger.debug("skill instructions cache hit: %s", skill_name)
-            return skill_instruction_cache.get(skill_name)
+        cache_key = self._instruction_cache_key(skill_name)
+        if _PERF_AVAILABLE:
+            cached = skill_instruction_cache.get(cache_key)
+            if cached is not None:
+                logger.debug("skill instructions cache hit: %s", skill_name)
+                return cached
 
         # 原有逻辑：读取文件 + 模板替换
         info = self._skill_registry[skill_name]
@@ -409,7 +429,7 @@ class SkillLoaderTool(BaseTool):
 
         # ✅ P1 集成：写入 LRU 缓存（TTL=300s，maxsize=256）
         if _PERF_AVAILABLE:
-            skill_instruction_cache.set(skill_name, instructions)
+            skill_instruction_cache.set(cache_key, instructions)
 
         return instructions
 

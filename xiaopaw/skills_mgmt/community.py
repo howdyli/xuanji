@@ -31,6 +31,34 @@ _SORT_MAP = {
 }
 
 
+def _visibility_where(viewer_org_id: int | None) -> tuple[str, list[Any]]:
+    """Build a SQL fragment restricting rows to those visible to viewer_org_id.
+
+    Public skills are visible to everyone. Private skills are visible only to
+    members of their owning organization. When viewer_org_id is None (no org
+    context), only public skills are visible.
+
+    Returns (sql_fragment, params); the fragment is already parenthesized and
+    safe to join with ``AND``.
+    """
+    if viewer_org_id is None:
+        return "visibility = 'public'", []
+    return (
+        "(visibility = 'public' OR (visibility = 'private' AND owner_org_id = %s))",
+        [viewer_org_id],
+    )
+
+
+def _skill_visible_to(skill: dict[str, Any], viewer_org_id: int | None) -> bool:
+    """Row-level access check mirroring :func:`_visibility_where`.
+
+    Used after a raw fetch to gate private skills to their owning org.
+    """
+    if skill.get("visibility") == "private":
+        return viewer_org_id is not None and skill.get("owner_org_id") == viewer_org_id
+    return True
+
+
 class CommunityError(Exception):
     """社区操作错误，带 code 供 HTTP 层映射。"""
 
@@ -88,12 +116,15 @@ class CommunityRegistry:
     def list_skills(
         self, search: str | None = None, category: str | None = None,
         sort: str = "popular", page: int = 1, page_size: int = 20,
+        viewer_org_id: int | None = None,
     ) -> dict[str, Any]:
-        """分页查询已审核通过的社区技能。"""
+        """分页查询已审核通过的社区技能（含 viewer 所属组织的私有技能）。"""
         order = _SORT_MAP.get(sort, _SORT_MAP["popular"])
         base = "SELECT * FROM community_skills WHERE status = 'approved'"
         count_base = "SELECT COUNT(*) FROM community_skills WHERE status = 'approved'"
         clauses, params, cparams = [], [], []
+        vis_sql, vis_params = _visibility_where(viewer_org_id)
+        clauses.append(vis_sql); params.extend(vis_params); cparams.extend(vis_params)
         if category:
             clauses.append("category = %s"); params.append(category); cparams.append(category)
         if search:
@@ -119,8 +150,8 @@ class CommunityRegistry:
             logger.error("list_skills failed: %s", exc)
             return {"skills": [], "total": 0}
 
-    def get_skill(self, name: str) -> dict[str, Any] | None:
-        """获取单条技能详情，含评分分布。"""
+    def get_skill(self, name: str, viewer_org_id: int | None = None) -> dict[str, Any] | None:
+        """获取单条技能详情，含评分分布。私有技能仅对同组织可见。"""
         try:
             with self._connect() as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -129,6 +160,8 @@ class CommunityRegistry:
                     if not row:
                         return None
                     skill = dict(row)
+                    if not _skill_visible_to(skill, viewer_org_id):
+                        return None
                     cur.execute(
                         "SELECT rating, COUNT(*) AS cnt FROM skill_reviews "
                         "WHERE skill_name = %s GROUP BY rating ORDER BY rating", (name,),
@@ -142,6 +175,18 @@ class CommunityRegistry:
             logger.error("get_skill failed: %s", exc)
             return None
 
+    def _get_skill_row(self, name: str) -> dict[str, Any] | None:
+        """Unscoped single-row fetch (no rating dist, no visibility gate)."""
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute("SELECT * FROM community_skills WHERE name = %s", (name,))
+                    row = cur.fetchone()
+            return dict(row) if row else None
+        except Exception as exc:
+            logger.error("_get_skill_row failed: %s", exc)
+            return None
+
     def get_categories(self) -> list[dict[str, Any]]:
         """查询技能分类。"""
         try:
@@ -153,10 +198,12 @@ class CommunityRegistry:
             logger.error("get_categories failed: %s", exc)
             return []
 
-    def get_rankings(self, period: str = "week") -> list[dict[str, Any]]:
+    def get_rankings(self, period: str = "week", viewer_org_id: int | None = None) -> list[dict[str, Any]]:
         """安装量排行榜 top 10。period: 'week' | 'month' | 'all'。"""
         sql = "SELECT * FROM community_skills WHERE status = 'approved'"
         params: list[Any] = []
+        vis_sql, vis_params = _visibility_where(viewer_org_id)
+        sql += f" AND {vis_sql}"; params.extend(vis_params)
         if period == "week":
             sql += " AND created_at >= %s"; params.append(datetime.now(timezone.utc) - timedelta(weeks=1))
         elif period == "month":
@@ -171,14 +218,17 @@ class CommunityRegistry:
             logger.error("get_rankings failed: %s", exc)
             return []
 
-    def get_featured(self) -> list[dict[str, Any]]:
+    def get_featured(self, viewer_org_id: int | None = None) -> list[dict[str, Any]]:
         """获取精选技能。"""
+        vis_sql, vis_params = _visibility_where(viewer_org_id)
         try:
             with self._connect() as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                     cur.execute(
                         "SELECT * FROM community_skills "
-                        "WHERE featured AND status = 'approved' ORDER BY install_count DESC"
+                        f"WHERE featured AND status = 'approved' AND {vis_sql} "
+                        "ORDER BY install_count DESC",
+                        vis_params,
                     )
                     return [dict(r) for r in cur.fetchall()]
         except Exception as exc:
@@ -187,10 +237,14 @@ class CommunityRegistry:
 
     # ─── 安装 ────────────────────────────────────────────────────
 
-    async def install_skill(self, name: str, user_id: str) -> str:
-        """安装社区技能：下载→校验→解压→计数+1→发事件。"""
-        skill = self.get_skill(name)
+    async def install_skill(self, name: str, user_id: str, viewer_org_id: int | None = None) -> str:
+        """安装社区技能：下载→校验→解压→计数+1→发事件。私有技能仅同组织可安装。"""
+        skill = self.get_skill(name, viewer_org_id=viewer_org_id)
         if not skill:
+            # Distinguish cross-org private (forbidden) from truly missing.
+            raw = self._get_skill_row(name)
+            if raw and not _skill_visible_to(raw, viewer_org_id):
+                raise CommunityError("forbidden", f"private skill not accessible: {name}")
             raise CommunityError("not_found", f"community skill not found: {name}")
         install_url = skill.get("install_url", "")
         if not install_url:
@@ -213,7 +267,6 @@ class CommunityRegistry:
             if actual != expected:
                 raise CommunityError("hash_mismatch", f"hash mismatch: {expected} != {actual}")
         # 解压安装
-        import asyncio
         try:
             unpacked_name, _ = await asyncio.to_thread(
                 unpack_skill, archive_bytes, self._user_dir,
@@ -237,8 +290,13 @@ class CommunityRegistry:
 
     # ─── 发布 ────────────────────────────────────────────────────
 
-    def publish_skill(self, publisher: str, metadata: dict[str, Any], zip_path: Path) -> dict[str, Any]:
-        """发布技能：校验→存储→入库→发事件。"""
+    def publish_skill(self, publisher: str, metadata: dict[str, Any], zip_path: Path,
+                      owner_org_id: int | None = None) -> dict[str, Any]:
+        """发布技能：校验→存储→入库→发事件。
+
+        visibility='private' 时为组织内私有技能，需 owner_org_id 且直接 approved（组织
+        内互信）；visibility='public'（默认）仍走 pending 审核流。
+        """
         name = metadata.get("name", "")
         if not name:
             raise CommunityError("missing_name", "metadata must include 'name'")
@@ -261,6 +319,18 @@ class CommunityRegistry:
         except OSError as exc:
             raise CommunityError("storage_failed", str(exc))
         install_url = metadata.get("install_url") or f"local://{dest}"
+        # Resolve visibility / owning org / initial moderation status.
+        visibility = metadata.get("visibility")
+        if visibility not in ("public", "private"):
+            visibility = "public"
+        if visibility == "private":
+            if owner_org_id is None:
+                dest.unlink(missing_ok=True)
+                raise CommunityError("no_org", "private skill requires an organization")
+            status = "approved"  # intra-org trust: auto-approve
+        else:
+            owner_org_id = None
+            status = "pending"
         try:
             with self._connect() as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -268,14 +338,15 @@ class CommunityRegistry:
                         """INSERT INTO community_skills
                             (name,publisher,category,tags,description,version,
                              icon_url,screenshots,repo_url,install_url,
-                             archive_hash,status,license,manifest_json)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s::jsonb)
+                             archive_hash,status,license,manifest_json,visibility,owner_org_id)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)
                            RETURNING *""",
                         (name, publisher, metadata.get("category", "general"),
                          metadata.get("tags", []), metadata.get("description", ""),
                          metadata.get("version", "1.0.0"), metadata.get("icon_url"),
                          metadata.get("screenshots", []), metadata.get("repo_url"),
-                         install_url, archive_hash, metadata.get("license", "MIT"), "{}"),
+                         install_url, archive_hash, status, metadata.get("license", "MIT"),
+                         "{}", visibility, owner_org_id),
                     )
                     row = dict(cur.fetchone())
                 conn.commit()

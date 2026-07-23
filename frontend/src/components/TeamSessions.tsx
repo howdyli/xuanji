@@ -4,6 +4,7 @@
  * 展示指定团队内被共享的会话，支持点击进入（只读/可编辑取决于 permission）。
  */
 import { useState, useEffect, useCallback } from 'react'
+import { apiFetch } from '../api/client'
 
 interface SharedSession {
   id: string
@@ -33,10 +34,7 @@ export default function TeamSessions({ authToken, onSessionSelect }: TeamSession
 
   // Fetch teams on mount
   useEffect(() => {
-    fetch('/api/frontend/teams', {
-      headers: { Authorization: `Bearer ${authToken}` },
-    })
-      .then(r => r.json())
+    apiFetch<{ teams?: Team[] }>('/api/frontend/teams')
       .then(data => {
         const t = data.teams || []
         setTeams(t)
@@ -50,11 +48,9 @@ export default function TeamSessions({ authToken, onSessionSelect }: TeamSession
   const fetchSessions = useCallback(async () => {
     if (!selectedTeamId) { setSessions([]); return }
     try {
-      const res = await fetch(`/api/frontend/teams/${selectedTeamId}/sessions`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      })
-      if (!res.ok) throw new Error('获取失败')
-      const data = await res.json()
+      const data = await apiFetch<{ sessions?: SharedSession[] }>(
+        `/api/frontend/teams/${selectedTeamId}/sessions`,
+      )
       setSessions(data.sessions || [])
       setError('')
     } catch (e) {

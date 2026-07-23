@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 
 _MIN_CREDENTIAL_LENGTH = 16
 
+# Well-known default tokens that must never guard a live TestAPI surface.
+_DEFAULT_TESTAPI_TOKENS = {"test-token-dev-2024", "test-token", "dev", ""}
+
 
 class SafetyViolation(Exception):
     pass
@@ -36,6 +39,14 @@ def assert_all_production_safe(cfg: AppConfig, *, is_dev: bool = False) -> None:
 
         if cfg.debug.test_api_host != "127.0.0.1":
             violations.append("debug.test_api_host must be 127.0.0.1")
+
+    # Defense-in-depth: even in dev, a TestAPI guarded by a well-known default
+    # token is a credential-exposure risk. Warn loudly so it is not shipped as-is.
+    if cfg.debug.enable_test_api and cfg.debug.test_api_token in _DEFAULT_TESTAPI_TOKENS:
+        logger.warning(
+            "debug.test_api_token is empty or a well-known default; "
+            "set XIAOPAW_TESTAPI_TOKEN to a strong secret before exposing TestAPI"
+        )
 
     if violations:
         for v in violations:

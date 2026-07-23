@@ -29,10 +29,14 @@ async def _metrics(request: web.Request) -> web.Response:
             return web.json_response({"error": "unauthorized"}, status=401)
 
     try:
-        from prometheus_client import generate_latest
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
         body = generate_latest()
-        return web.Response(body=body, content_type="text/plain; charset=utf-8")
+        # NOTE: aiohttp forbids a charset inside the ``content_type`` argument, so we
+        # set the full Prometheus content type (which includes version + charset)
+        # via the headers instead. Passing it as ``content_type`` raises ValueError
+        # and previously caused /metrics to return 500.
+        return web.Response(body=body, headers={"Content-Type": CONTENT_TYPE_LATEST})
     except ImportError:
         return web.json_response({"error": "prometheus_client not installed"}, status=501)
 

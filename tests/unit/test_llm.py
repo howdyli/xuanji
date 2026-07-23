@@ -12,11 +12,14 @@ from unittest.mock import patch
 import pytest
 
 from xiaopaw.llm.model_router import (
+    COMPLEXITY_HIGH,
+    COMPLEXITY_MID,
     ModelConfig,
     ModelRouter,
     ModelStats,
     RoutingStrategy,
     TaskType,
+    estimate_prompt_complexity,
 )
 from xiaopaw.llm.aliyun_llm import (
     ENDPOINTS,
@@ -221,6 +224,16 @@ class TestRecordCall:
     def test_unknown_model_no_error(self, router):
         router.record_call("nonexistent", success=True, latency_ms=10)
 
+    def test_token_and_cost_accumulation(self, router):
+        router.register_model(_mc("a", cost_per_1k_tokens=0.002, cost_per_1k_output=0.006))
+        router.record_call("a", success=True, latency_ms=50, input_tokens=1000, output_tokens=500)
+        router.record_call("a", success=True, latency_ms=50, input_tokens=500, output_tokens=0)
+        s = router._stats["a"]
+        assert s.total_input_tokens == 1500
+        assert s.total_output_tokens == 500
+        # (1000+500)*0.002/1000 + 500*0.006/1000 = 0.003 + 0.003 = 0.006
+        assert s.estimated_cost_usd == pytest.approx(0.006)
+
 
 class TestGetStats:
     def test_structure(self, router):
@@ -246,6 +259,90 @@ class TestGetStats:
         router.reset_stats("a")
         assert router._stats["a"].total_calls == 0
         assert router._stats["b"].total_calls == 1
+
+    def test_totals_aggregate(self, router):
+        router.register_model(_mc("a", cost_per_1k_tokens=0.001, cost_per_1k_output=0.002))
+        router.register_model(_mc("b", cost_per_1k_tokens=0.001, cost_per_1k_output=0.002))
+        router.record_call("a", success=True, latency_ms=100, input_tokens=1000, output_tokens=500)
+        router.record_call("b", success=True, latency_ms=100, input_tokens=2000, output_tokens=0)
+        stats = router.get_stats()
+        assert stats["totals"]["total_calls"] == 2
+        assert stats["totals"]["total_input_tokens"] == 3000
+        assert stats["totals"]["total_output_tokens"] == 500
+        assert stats["totals"]["total_tokens"] == 3500
+        # a: 1000*0.001/1000 + 500*0.002/1000 = 0.001 + 0.001 = 0.002
+        # b: 2000*0.001/1000 = 0.002 ; 总 0.004
+        assert stats["totals"]["estimated_cost_usd"] == pytest.approx(0.004)
+
+
+# ═══════════════════════════════════════════════════════════════
+# model_router.py — 复杂度自适应路由（P2-3）
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestEstimateComplexity:
+    def test_empty_is_zero(self):
+        assert estimate_prompt_complexity("") == 0.0
+        assert estimate_prompt_complexity("   ") == 0.0
+
+    def test_simple_low(self):
+        assert estimate_prompt_complexity("你好") < COMPLEXITY_MID
+
+    def test_complex_prompt_scores_high(self):
+        prompt = (
+            "请分析并设计一个高并发系统的架构，逐步推理各模块之间的依赖，"
+            "并对算法进行优化。\n```python\nprint(1)\n```\n1. 第一步\n2. 第二步"
+        )
+        assert estimate_prompt_complexity(prompt) >= COMPLEXITY_HIGH
+
+    def test_complex_greater_than_simple(self):
+        simple = estimate_prompt_complexity("今天天气怎么样")
+        complex_ = estimate_prompt_complexity("请设计并证明该算法的正确性与复杂度")
+        assert complex_ > simple
+
+
+class TestComplexityRouting:
+    def test_empty_prompt_falls_back_to_cost(self, router):
+        assert router._strategy_for_prompt(None) == RoutingStrategy.COST_FIRST
+        assert router._strategy_for_prompt("") == RoutingStrategy.COST_FIRST
+
+    def test_high_complexity_maps_to_quality(self, router):
+        prompt = (
+            "请分析并设计一个高并发系统的架构，逐步推理各模块依赖，对算法优化。"
+            "\n```python\nx=1\n```\n1. a\n2. b"
+        )
+        assert router._strategy_for_prompt(prompt) == RoutingStrategy.QUALITY_FIRST
+
+    def test_low_complexity_maps_to_cost(self, router):
+        assert router._strategy_for_prompt("你好") == RoutingStrategy.COST_FIRST
+
+    def test_get_llm_complexity_picks_quality_model(self, router):
+        # cheap: 低价低质；smart: 高价高质
+        router.register_model(_mc("cheap", cost_per_1k_tokens=0.001, quality_score=6.0))
+        router.register_model(_mc("smart", cost_per_1k_tokens=0.01, quality_score=9.5))
+        router.set_task_route(TaskType.ORCHESTRATOR, ["cheap", "smart"])
+        complex_prompt = (
+            "请分析并设计高并发架构，逐步推理依赖并优化算法\n```py\nx=1\n```\n1. a\n2. b"
+        )
+        with patch.object(router, "_create_llm", side_effect=lambda cfg: cfg.name):
+            chosen = router.get_llm(
+                task_type=TaskType.ORCHESTRATOR,
+                strategy=RoutingStrategy.COMPLEXITY_BASED,
+                prompt=complex_prompt,
+            )
+        assert chosen == "smart"
+
+    def test_get_llm_complexity_picks_cheap_model(self, router):
+        router.register_model(_mc("cheap", cost_per_1k_tokens=0.001, quality_score=6.0))
+        router.register_model(_mc("smart", cost_per_1k_tokens=0.01, quality_score=9.5))
+        router.set_task_route(TaskType.ORCHESTRATOR, ["cheap", "smart"])
+        with patch.object(router, "_create_llm", side_effect=lambda cfg: cfg.name):
+            chosen = router.get_llm(
+                task_type=TaskType.ORCHESTRATOR,
+                strategy=RoutingStrategy.COMPLEXITY_BASED,
+                prompt="你好",
+            )
+        assert chosen == "cheap"
 
 
 class TestInitFromConfig:

@@ -228,6 +228,15 @@ ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS pending_archive_hash  TEXT
 ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS has_pending_update    BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS pending_submitted_at  TIMESTAMPTZ;
 
+-- Private (org-scoped) registry: 'public' skills are globally visible; 'private'
+-- skills are visible/installable only within their owning organization
+-- (owner_org_id). Private skills auto-approve on publish (intra-org trust).
+ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS visibility    TEXT NOT NULL DEFAULT 'public';
+ALTER TABLE community_skills ADD COLUMN IF NOT EXISTS owner_org_id  BIGINT;
+
+CREATE INDEX IF NOT EXISTS idx_community_visibility
+    ON community_skills (visibility, owner_org_id);
+
 -- ============================================================
 -- Skill reviews: per-user ratings and comments for community skills.
 -- One review per (skill, user) pair enforced by UNIQUE constraint.

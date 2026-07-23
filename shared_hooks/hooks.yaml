@@ -43,6 +43,16 @@ strategies:
   - name: permission_gate
     class: permission_gate.PermissionGate
     config: {}
+    # 细粒度 RBAC（可选）：调用方角色由 Runner.role_resolver 解析
+    # （admin/member/""），角色叠加"仅收紧不放松"。默认 config: {} => 无 roles，
+    # 行为与旧版完全一致。启用示例：
+    #   config:
+    #     roles:
+    #       member:            # 普通用户：降权
+    #         default: warn
+    #         tools:
+    #           shell_exec: deny
+    #       admin: {}          # 管理员：无收紧（保留 base 权限）
     deps:
       audit: audit_logger
     hooks:

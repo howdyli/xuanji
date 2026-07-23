@@ -217,6 +217,7 @@ class AliyunLLM(BaseLLM):
         elapsed_delay_ms = 0
         for attempt in range(self.retry_count + 1):
             try:
+                _req_start = time.monotonic()
                 resp = _get_session().post(
                     self.endpoint, json=payload, headers=headers, timeout=self.timeout
                 )
@@ -248,6 +249,10 @@ class AliyunLLM(BaseLLM):
                     resp.raise_for_status()
 
                 data = resp.json()
+                # 上报本次调用的延迟与 token 给 ModelRouter（用于成本看板/健康统计）。
+                # 包在 try 里确保统计故障永不影响主调用链路。
+                self._report_call_stats(use_model, _req_start, data.get("usage"))
+
                 choice = data.get("choices", [{}])[0]
                 message = choice.get("message", {})
                 content = message.get("content", "")
@@ -337,6 +342,28 @@ class AliyunLLM(BaseLLM):
                         continue
 
         raise last_exc or RuntimeError("LLM call failed after all retries")
+
+    def _report_call_stats(self, model_name: str, req_start: float, usage) -> None:
+        """向 ModelRouter 上报一次成功调用的延迟与 token 消耗。
+
+        - usage 形如 {"prompt_tokens": N, "completion_tokens": M}（OpenAI 兼容格式）。
+        - 未注册的模型在 record_call 内部会被静默忽略，故这里无需判断。
+        - 整体包在 try 里：统计上报属于旁路，绝不能影响 LLM 调用本身。
+        """
+        try:
+            from xiaopaw.llm.model_router import model_router
+
+            latency_ms = (time.monotonic() - req_start) * 1000.0
+            usage = usage or {}
+            model_router.record_call(
+                model_name,
+                success=True,
+                latency_ms=latency_ms,
+                input_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                output_tokens=int(usage.get("completion_tokens", 0) or 0),
+            )
+        except Exception:  # noqa: BLE001 - 统计上报失败不影响主链路
+            logger.debug("failed to report call stats", exc_info=True)
 
     def _handle_function_calls(self, tool_calls, messages, tools, available_functions, max_iterations):
         messages = list(messages)

@@ -10,9 +10,10 @@
  *   ├─ Toast 通知                                ─┤
  *   └────────────────────────────────────────────┘
  */
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useState } from 'react'
 import type { InstalledSkill } from './SkillManagerView'
 import { AdminReviewView } from './market/AdminReviewView'
+import { apiFetch } from '../api/client'
 
 // ─── API ─────────────────────────────────────────────────────────────────
 const API_BASE = '/api/frontend/market/community'
@@ -53,6 +54,8 @@ export interface MarketSkillV2 {
   created_at: string
   status?: string
   review_note?: string
+  visibility?: 'public' | 'private'
+  owner_org_id?: number | null
 }
 
 export interface Review {
@@ -148,18 +151,10 @@ function reducer(state: MarketState, action: Action): MarketState {
 // ─── useMarketplace Hook ─────────────────────────────────────────────────
 export function useMarketplace(authToken: string) {
   const [state, dispatch] = useReducer(reducer, initialState)
-  const headersRef = useRef<Record<string, string>>({})
-  headersRef.current = { Authorization: `Bearer ${authToken}` }
 
   const fireToast = useCallback((msg: string) => {
     dispatch({ type: 'SET_TOAST', payload: msg })
     window.setTimeout(() => dispatch({ type: 'SET_TOAST', payload: '' }), 2400)
-  }, [])
-
-  // helper: authed fetch
-  const authFetch = useCallback(async (url: string, init?: RequestInit) => {
-    const res = await fetch(url, { ...init, headers: { ...headersRef.current, ...(init?.headers as Record<string, string> || {}) } })
-    return res
   }, [])
 
   // ── API functions ──
@@ -168,107 +163,100 @@ export function useMarketplace(authToken: string) {
     dispatch({ type: 'SET_ERROR', payload: '' })
     try {
       const qs = params ? '?' + new URLSearchParams(params).toString() : ''
-      const res = await authFetch(`${API_BASE}/skills${qs}`)
-      const data = await res.json().catch(() => ({}))
-      if (res.ok) dispatch({ type: 'SET_MARKET_SKILLS', payload: data.skills ?? [] })
-      else dispatch({ type: 'SET_ERROR', payload: data.error || `加载失败 (${res.status})` })
+      const data = await apiFetch<{ skills?: MarketSkillV2[] }>(`${API_BASE}/skills${qs}`)
+      dispatch({ type: 'SET_MARKET_SKILLS', payload: data.skills ?? [] })
     } catch (e) { dispatch({ type: 'SET_ERROR', payload: e instanceof Error ? e.message : String(e) }) }
     finally { dispatch({ type: 'SET_LOADING', payload: false }) }
-  }, [authFetch])
+  }, [])
 
   const fetchCategories = useCallback(async () => {
     try {
-      const res = await authFetch(`${API_BASE}/categories`)
-      const data = await res.json().catch(() => ({}))
-      if (res.ok) dispatch({ type: 'SET_CATEGORIES', payload: data.categories ?? [] })
+      const data = await apiFetch<{ categories?: Category[] }>(`${API_BASE}/categories`)
+      dispatch({ type: 'SET_CATEGORIES', payload: data.categories ?? [] })
     } catch { /* silent */ }
-  }, [authFetch])
+  }, [])
 
   const fetchRankings = useCallback(async (period: 'week' | 'month' = 'week') => {
     try {
-      const res = await authFetch(`${API_BASE}/rankings?period=${period}`)
-      const data = await res.json().catch(() => ({}))
-      if (res.ok) {
-        dispatch({
-          type: 'SET_RANKINGS',
-          payload: { ...state.rankings, [period]: data.skills ?? [] },
-        })
-      }
+      const data = await apiFetch<{ skills?: MarketSkillV2[] }>(`${API_BASE}/rankings?period=${period}`)
+      dispatch({
+        type: 'SET_RANKINGS',
+        payload: { ...state.rankings, [period]: data.skills ?? [] },
+      })
     } catch { /* silent */ }
-  }, [authFetch, state.rankings])
+  }, [state.rankings])
 
   const fetchFeatured = useCallback(async () => {
     try {
-      const res = await authFetch(`${API_BASE}/featured`)
-      const data = await res.json().catch(() => ({}))
-      if (res.ok) dispatch({ type: 'SET_FEATURED', payload: data.skills ?? [] })
+      const data = await apiFetch<{ skills?: MarketSkillV2[] }>(`${API_BASE}/featured`)
+      dispatch({ type: 'SET_FEATURED', payload: data.skills ?? [] })
     } catch { /* silent */ }
-  }, [authFetch])
+  }, [])
 
   const installSkill = useCallback(async (name: string) => {
     try {
-      const res = await authFetch(`${API_BASE}/skills/${encodeURIComponent(name)}/install`, { method: 'POST' })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) { fireToast(`安装失败：${data.error || res.status}`); return false }
+      await apiFetch(`${API_BASE}/skills/${encodeURIComponent(name)}/install`, { method: 'POST' })
       fireToast('安装成功')
       return true
     } catch (e) { fireToast(`安装失败：${e instanceof Error ? e.message : String(e)}`); return false }
-  }, [authFetch, fireToast])
+  }, [fireToast])
 
   const fetchSkillDetail = useCallback(async (name: string) => {
-    const res = await authFetch(`${API_BASE}/skills/${encodeURIComponent(name)}`)
-    const data = await res.json().catch(() => ({}))
-    return res.ok ? (data as MarketSkillV2) : null
-  }, [authFetch])
+    try {
+      return await apiFetch<MarketSkillV2>(`${API_BASE}/skills/${encodeURIComponent(name)}`)
+    } catch { return null }
+  }, [])
 
   const fetchReviews = useCallback(async (name: string, page = 1) => {
-    const res = await authFetch(`${API_BASE}/skills/${encodeURIComponent(name)}/reviews?page=${page}`)
-    const data = await res.json().catch(() => ({}))
-    return res.ok ? ((data.reviews ?? []) as Review[]) : []
-  }, [authFetch])
+    try {
+      const data = await apiFetch<{ reviews?: Review[] }>(`${API_BASE}/skills/${encodeURIComponent(name)}/reviews?page=${page}`)
+      return (data.reviews ?? []) as Review[]
+    } catch { return [] as Review[] }
+  }, [])
 
   const submitReview = useCallback(async (name: string, rating: number, comment: string) => {
-    const res = await authFetch(`${API_BASE}/skills/${encodeURIComponent(name)}/reviews`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rating, comment }),
-    })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) { fireToast(`提交失败：${data.error || res.status}`); return false }
-    fireToast('评价已提交')
-    return true
-  }, [authFetch, fireToast])
+    try {
+      await apiFetch(`${API_BASE}/skills/${encodeURIComponent(name)}/reviews`, {
+        method: 'POST',
+        json: { rating, comment },
+      })
+      fireToast('评价已提交')
+      return true
+    } catch (e) { fireToast(`提交失败：${e instanceof Error ? e.message : String(e)}`); return false }
+  }, [fireToast])
 
   const publishSkill = useCallback(async (formData: FormData) => {
     dispatch({ type: 'SET_LOADING', payload: true })
     try {
-      const res = await authFetch(`${API_BASE}/publish`, { method: 'POST', body: formData })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) { fireToast(`发布失败：${data.error || res.status}`); return false }
+      await apiFetch(`${API_BASE}/publish`, { method: 'POST', body: formData })
       fireToast('发布成功')
       return true
     } catch (e) { fireToast(`发布失败：${e instanceof Error ? e.message : String(e)}`); return false }
     finally { dispatch({ type: 'SET_LOADING', payload: false }) }
-  }, [authFetch, fireToast])
+  }, [fireToast])
 
   const fetchMySkills = useCallback(async () => {
-    const res = await authFetch(`${API_BASE}/my-skills`)
-    const data = await res.json().catch(() => ({}))
-    return res.ok ? ((data.skills ?? []) as MarketSkillV2[]) : []
-  }, [authFetch])
+    try {
+      const data = await apiFetch<{ skills?: MarketSkillV2[] }>(`${API_BASE}/my-skills`)
+      return (data.skills ?? []) as MarketSkillV2[]
+    } catch { return [] as MarketSkillV2[] }
+  }, [])
 
   const fetchFavorites = useCallback(async () => {
-    const res = await authFetch(`${API_BASE}/favorites`)
-    const data = await res.json().catch(() => ({}))
-    return res.ok ? ((data.skills ?? []) as MarketSkillV2[]) : []
-  }, [authFetch])
+    try {
+      const data = await apiFetch<{ skills?: MarketSkillV2[] }>(`${API_BASE}/favorites`)
+      return (data.skills ?? []) as MarketSkillV2[]
+    } catch { return [] as MarketSkillV2[] }
+  }, [])
 
   const toggleFavorite = useCallback(async (name: string, isFav: boolean) => {
     const method = isFav ? 'DELETE' : 'POST'
-    const res = await authFetch(`${API_BASE}/favorites/${encodeURIComponent(name)}`, { method })
-    if (res.ok) fireToast(isFav ? '已取消收藏' : '已收藏')
-    return res.ok
-  }, [authFetch, fireToast])
+    try {
+      await apiFetch(`${API_BASE}/favorites/${encodeURIComponent(name)}`, { method })
+      fireToast(isFav ? '已取消收藏' : '已收藏')
+      return true
+    } catch { return false }
+  }, [fireToast])
 
   // initial load
   useEffect(() => {
@@ -301,13 +289,10 @@ export function MarketplaceView({ authToken, isAdmin = false }: { authToken: str
   const refreshPendingCount = useCallback(async () => {
     if (!isAdmin) return
     try {
-      const res = await fetch(`${API_BASE}/admin/pending`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok) setPendingCount(typeof data.total === 'number' ? data.total : (data.skills ?? []).length)
+      const data = await apiFetch<{ total?: number; skills?: unknown[] }>(`${API_BASE}/admin/pending`)
+      setPendingCount(typeof data.total === 'number' ? data.total : (data.skills ?? []).length)
     } catch { /* silent */ }
-  }, [isAdmin, authToken])
+  }, [isAdmin])
 
   useEffect(() => {
     refreshPendingCount()
@@ -489,6 +474,11 @@ function MySkillsView({ skills, loading }: { skills: MarketSkillV2[]; loading: b
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[14px] font-medium text-gray-900">{s.name}</span>
               <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">v{s.version}</span>
+              {s.visibility === 'private' ? (
+                <span className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">组织内</span>
+              ) : (
+                <span className="text-[11px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700">公开</span>
+              )}
               <span className={`text-[11px] px-1.5 py-0.5 rounded ${meta.cls}`}>{meta.label}</span>
             </div>
             <p className="text-[12.5px] text-gray-600 mt-1.5 break-words">{s.description}</p>

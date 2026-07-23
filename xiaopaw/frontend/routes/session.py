@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from aiohttp import web
@@ -22,11 +25,43 @@ from xiaopaw.observability.trace import new_trace_id
 
 logger = logging.getLogger(__name__)
 
+# Typewriter chunking for the streaming endpoint. CrewAI has no token-level
+# streaming, so the reply arrives all-at-once; we split it into small chunks
+# to produce a progressive "typewriter" render on the client. The same `delta`
+# protocol will transparently carry real tokens if token streaming is added.
+_STREAM_CHUNK_CHARS = 4
+_STREAM_CHUNK_DELAY = 0.012  # seconds between chunks
+_STREAM_MAX_ANIMATION = 2.0  # cap total added latency (long replies use bigger chunks)
 
-async def handle_message(request: web.Request) -> web.Response:
-    """POST /api/frontend/message - send a message to the AI."""
+
+@dataclass
+class _PreparedMessage:
+    """Everything a message handler needs after auth/session/inbound setup."""
+
+    runner: object
+    sender: object
+    session_mgr: object
+    pg_store: PGStore | None
+    inbound: InboundMessage
+    session: object
+    session_id: str
+    routing_key: str
+    user: dict | None
+    content: str
+    msg_id: str
+
+
+async def _prepare_message(
+    request: web.Request,
+) -> tuple[_PreparedMessage | None, web.Response | None]:
+    """Shared setup for the one-shot and streaming message endpoints.
+
+    Returns ``(prepared, None)`` on success or ``(None, error_response)`` when
+    auth/validation/permission checks fail. Callers own dispatch, reply capture
+    and persistence so the two endpoints can differ only in transport.
+    """
     if not check_auth(request):
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return None, web.json_response({"error": "unauthorized"}, status=401)
 
     try:
         body = await request.json()
@@ -34,9 +69,9 @@ async def handle_message(request: web.Request) -> web.Response:
         session_id_hint = body.get("session_id", "")
         expert_name = body.get("expert", "").strip()
         if not content:
-            return web.json_response({"error": "content is required"}, status=422)
+            return None, web.json_response({"error": "content is required"}, status=422)
     except Exception as exc:
-        return web.json_response({"error": str(exc)}, status=422)
+        return None, web.json_response({"error": str(exc)}, status=422)
 
     # Build routing_key from authenticated user (ignore frontend value)
     routing_key = get_routing_key_from_request(request)
@@ -49,7 +84,7 @@ async def handle_message(request: web.Request) -> web.Response:
     pg_store: PGStore | None = request.app.get("pg_store")
 
     if not runner or not session_mgr:
-        return web.json_response({"error": "backend not ready"}, status=503)
+        return None, web.json_response({"error": "backend not ready"}, status=503)
 
     # Activate existing session if session_id_hint provided.
     # Sessions owned by a *different* routing_key are team-shared: writing to
@@ -63,9 +98,9 @@ async def handle_message(request: web.Request) -> web.Response:
             if owning_rk and owning_rk != routing_key and owning_rk != "p2p:web_user":
                 permission = _resolve_shared_session_permission(request, session_id_hint)
                 if permission is None:
-                    return web.json_response({"error": "not found"}, status=404)
+                    return None, web.json_response({"error": "not found"}, status=404)
                 if permission != "edit":
-                    return web.json_response(
+                    return None, web.json_response(
                         {"error": "read-only: this shared session grants view access only"},
                         status=403,
                     )
@@ -93,14 +128,58 @@ async def handle_message(request: web.Request) -> web.Response:
         trace_id=new_trace_id(),
     )
 
+    return (
+        _PreparedMessage(
+            runner=runner,
+            sender=sender,
+            session_mgr=session_mgr,
+            pg_store=pg_store,
+            inbound=inbound,
+            session=session,
+            session_id=session_id,
+            routing_key=routing_key,
+            user=user,
+            content=content,
+            msg_id=msg_id,
+        ),
+        None,
+    )
+
+
+async def _persist_exchange(prep: _PreparedMessage, reply: str) -> None:
+    """Persist the user message + assistant reply to PostgreSQL (best-effort)."""
+    pg_store = prep.pg_store
+    if not pg_store:
+        return
+    await pg_store.save_conversation(
+        prep.msg_id, prep.session_id, prep.routing_key, "user", prep.content
+    )
+    await pg_store.save_conversation(
+        f"{prep.msg_id}_reply", prep.session_id, prep.routing_key, "assistant", reply
+    )
+    await pg_store.save_session(
+        prep.session_id, prep.routing_key,
+        title=prep.content[:80],
+        message_count=prep.session.message_count + 2,
+        org_id=prep.user.get("org_id") if prep.user else None,
+    )
+
+
+async def handle_message(request: web.Request) -> web.Response:
+    """POST /api/frontend/message - send a message to the AI."""
+    prep, err = await _prepare_message(request)
+    if err is not None:
+        return err
+    assert prep is not None
+
     # Register a future to capture the AI reply
     future = None
-    if isinstance(sender, CaptureSender):
-        future = sender.register(msg_id)
+    if isinstance(prep.sender, CaptureSender):
+        future = prep.sender.register(prep.msg_id)
 
     # Dispatch to runner
     start = time.monotonic()
-    await runner.dispatch(inbound)
+    await prep.runner.dispatch(prep.inbound)
 
     # Wait for reply (only works with CaptureSender)
     reply = ""
@@ -113,26 +192,112 @@ async def handle_message(request: web.Request) -> web.Response:
 
     duration_ms = int((time.monotonic() - start) * 1000)
 
-    # Persist to PostgreSQL (async, fire-and-forget)
-    if pg_store:
-        await pg_store.save_conversation(msg_id, session_id, routing_key, "user", content)
-        await pg_store.save_conversation(
-            f"{msg_id}_reply", session_id, routing_key, "assistant", reply
-        )
-        await pg_store.save_session(
-            session_id, routing_key,
-            title=content[:80],
-            message_count=session.message_count + 2,
-            org_id=user.get("org_id") if user else None,
-        )
+    await _persist_exchange(prep, reply)
 
     return web.json_response({
-        "msg_id": msg_id,
+        "msg_id": prep.msg_id,
         "reply": reply,
-        "session_id": session_id,
+        "session_id": prep.session_id,
         "duration_ms": duration_ms,
-        "trace_id": inbound.trace_id,
+        "trace_id": prep.inbound.trace_id,
     })
+
+
+def _sse_frame(event: str, data: dict) -> bytes:
+    """Format a single SSE frame (matches activity_stream.py wire format)."""
+    payload = json.dumps(data, ensure_ascii=False, default=str)
+    return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
+
+
+def _chunk_reply(reply: str) -> list[str]:
+    """Split *reply* into typewriter chunks with a bounded animation budget.
+
+    Short replies stream in ~4-char chunks; long replies grow the chunk size so
+    total added latency never exceeds ``_STREAM_MAX_ANIMATION``.
+    """
+    if not reply:
+        return []
+    max_chunks = max(1, int(_STREAM_MAX_ANIMATION / _STREAM_CHUNK_DELAY))
+    chunk_size = max(_STREAM_CHUNK_CHARS, -(-len(reply) // max_chunks))
+    return [reply[i:i + chunk_size] for i in range(0, len(reply), chunk_size)]
+
+
+async def handle_message_stream(request: web.Request) -> web.StreamResponse:
+    """POST /api/frontend/message/stream - stream the AI reply via SSE.
+
+    Emits ``start`` -> ``delta``* -> ``done`` frames. Because CrewAI returns the
+    reply all-at-once, deltas are server-chunked for a typewriter effect; the
+    protocol is forward-compatible with real token streaming. Errors surface as
+    an ``error`` frame so the client can classify + reconcile.
+    """
+    prep, err = await _prepare_message(request)
+    if err is not None:
+        return err
+    assert prep is not None
+
+    future = None
+    if isinstance(prep.sender, CaptureSender):
+        future = prep.sender.register(prep.msg_id)
+
+    response = web.StreamResponse(
+        status=200,
+        reason="OK",
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+    await response.prepare(request)
+
+    start = time.monotonic()
+    reply = ""
+    try:
+        await response.write(_sse_frame("start", {
+            "msg_id": prep.msg_id,
+            "session_id": prep.session_id,
+            "trace_id": prep.inbound.trace_id,
+        }))
+
+        await prep.runner.dispatch(prep.inbound)
+
+        if future:
+            try:
+                reply = await future
+            except Exception as exc:
+                logger.warning("frontend: reply capture failed: %s", exc)
+                reply = "[error]"
+
+        for chunk in _chunk_reply(reply):
+            await response.write(_sse_frame("delta", {"text": chunk}))
+            if _STREAM_CHUNK_DELAY:
+                await asyncio.sleep(_STREAM_CHUNK_DELAY)
+
+        duration_ms = int((time.monotonic() - start) * 1000)
+        await response.write(_sse_frame("done", {
+            "msg_id": prep.msg_id,
+            "reply": reply,
+            "session_id": prep.session_id,
+            "duration_ms": duration_ms,
+            "trace_id": prep.inbound.trace_id,
+        }))
+    except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+        logger.debug("stream: client disconnected msg_id=%s", prep.msg_id)
+    except Exception as exc:
+        logger.warning("stream: message stream failed: %s", exc)
+        try:
+            await response.write(_sse_frame("error", {"message": str(exc)}))
+        except Exception:
+            pass
+    finally:
+        # Persist whatever reply we captured (even on client disconnect).
+        try:
+            await _persist_exchange(prep, reply)
+        except Exception as exc:
+            logger.warning("stream: persist failed: %s", exc)
+
+    return response
 
 
 async def handle_sessions(request: web.Request) -> web.Response:
@@ -358,6 +523,7 @@ async def handle_config(request: web.Request) -> web.Response:
 def register_session_routes(app: web.Application) -> None:
     """Register session and messaging routes."""
     app.router.add_post("/api/frontend/message", handle_message)
+    app.router.add_post("/api/frontend/message/stream", handle_message_stream)
     app.router.add_post("/api/frontend/sessions", handle_create_session)
     app.router.add_get("/api/frontend/sessions", handle_sessions)
     app.router.add_get("/api/frontend/sessions/{session_id}/messages", handle_session_messages)

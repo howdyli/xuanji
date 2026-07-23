@@ -27,6 +27,9 @@ import TeamPanel from './components/TeamPanel'
 
 // ✅ P1 集成：导入 UX 优化组件库
 import { LoadingStates } from './components/UXComponents'
+// ✅ P1-4：统一 API 客户端（状态校验 + 错误分类）
+// ✅ P1-1：SSE 流式聊天（打字机渲染）
+import { apiFetch, rawFetch, classifyError, streamMessage, ApiError } from './api/client'
 
 // --- Config ---
 const API_BASE = '/api/frontend'
@@ -88,13 +91,7 @@ function App() {
       setAuthLoading(false)
       return
     }
-    fetch(`${API_BASE}/auth/me`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-    })
-      .then((r) => {
-        if (!r.ok) throw new Error('invalid token')
-        return r.json()
-      })
+    apiFetch<{ user: CurrentUser }>(`${API_BASE}/auth/me`)
       .then((data) => {
         setCurrentUser(data.user)
       })
@@ -116,10 +113,7 @@ function App() {
   const handleLogout = useCallback(async () => {
     if (authToken) {
       try {
-        await fetch(`${API_BASE}/auth/logout`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${authToken}` },
-        })
+        await apiFetch(`${API_BASE}/auth/logout`, { method: 'POST' })
       } catch { /* ignore */ }
     }
     localStorage.removeItem('auth_token')
@@ -145,10 +139,7 @@ function App() {
   // Helper to fetch sessions list
   const fetchSessions = useCallback(() => {
     if (!authToken) return
-    fetch(`${API_BASE}/sessions`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-    })
-      .then((r) => r.json())
+    apiFetch<{ sessions?: Session[] }>(`${API_BASE}/sessions`)
       .then((data) => {
         if (data.sessions) setSessions(data.sessions)
       })
@@ -181,10 +172,7 @@ function App() {
     setActiveSessionId(id)
     setHistoryLoading(true)
     try {
-      const res = await fetch(`${API_BASE}/sessions/${id}/messages`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      })
-      const data = await res.json()
+      const data = await apiFetch<{ messages?: any[] }>(`${API_BASE}/sessions/${id}/messages`)
       if (data.messages) {
         setMessages(data.messages.map((m: any) => ({
           id: m.id,
@@ -218,26 +206,29 @@ function App() {
       ])
       setLoading(true)
 
+      const payload = {
+        content: text,
+        session_id: activeSessionIdRef.current || undefined,
+        routing_key: `p2p:web_${currentUser?.username || 'anonymous'}`,
+        sender_id: currentUser?.username || 'web_user',
+        expert: activeExpert || undefined,
+      }
 
-
-      try {
-        const res = await fetch(`${API_BASE}/message`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken}`,
-          },
-          body: JSON.stringify({
-            content: text,
-            session_id: activeSessionIdRef.current || undefined,
-            routing_key: `p2p:web_${currentUser?.username || 'anonymous'}`,
-            sender_id: currentUser?.username || 'web_user',
-            expert: activeExpert || undefined,
-          }),
-        })
-        const data: ApiResponse = await res.json()
+      // 流式占位气泡：首个 delta 到达时创建，后续逐段追加（打字机）。
+      const assistantId = `stream_${Date.now()}`
+      let created = false
+      const ensureAssistant = () => {
+        if (created) return
+        created = true
         setMessages((prev) => [
           ...prev,
+          { id: assistantId, role: 'assistant', content: '', timestamp: new Date().toISOString() },
+        ])
+      }
+
+      const applyOneShot = (data: ApiResponse) => {
+        setMessages((prev) => [
+          ...prev.filter((m) => !(m.id === assistantId && !m.content)),
           {
             id: data.msg_id,
             role: 'assistant',
@@ -247,19 +238,16 @@ function App() {
         ])
         if (data.session_id) {
           setActiveSessionId(data.session_id)
-          // Refresh sessions list to pick up new/updated session
           fetchSessions()
         }
-      } catch (err) {
-        // ✅ P1 集成：使用 ErrorDisplay 替换简单错误文本
-        const errorMessage = err instanceof Error ? err.message : String(err)
-        const errorType = errorMessage.includes('timeout') ? 'network_timeout' as const
-          : errorMessage.includes('401') || errorMessage.includes('403') ? 'permission_denied' as const
-          : errorMessage.includes('429') ? 'quota_exceeded' as const
-          : 'server_error' as const
+      }
 
+      const showError = (err: unknown) => {
+        // ✅ P1-4：由统一客户端根据 HTTP 状态/网络异常分类。
+        const errorType = classifyError(err)
+        const errorMessage = err instanceof Error ? err.message : String(err)
         setMessages((prev) => [
-          ...prev,
+          ...prev.filter((m) => !(m.id === assistantId && !m.content)),
           {
             id: `err_${Date.now()}`,
             role: 'assistant',
@@ -267,6 +255,50 @@ function App() {
             timestamp: new Date().toISOString(),
           },
         ])
+      }
+
+      try {
+        await streamMessage(payload, {
+          onStart: ensureAssistant,
+          onDelta: (chunk) => {
+            ensureAssistant()
+            setMessages((prev) =>
+              prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + chunk } : m)),
+            )
+          },
+          onDone: (data) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? { ...m, id: data.msg_id, content: data.reply || m.content || '(空回复)' }
+                  : m,
+              ),
+            )
+            if (data.session_id) {
+              setActiveSessionId(data.session_id)
+              fetchSessions()
+            }
+          },
+        })
+      } catch (err) {
+        // 仅在“服务端尚未 dispatch”（非 2xx / 网络建连失败，status ≠ 200）时回退到
+        // 一次性 /message，避免流式中途断开后重发导致 Agent 重复执行。
+        const preDispatch = err instanceof ApiError && err.status !== 200
+        if (preDispatch) {
+          try {
+            const data = await apiFetch<ApiResponse>(`${API_BASE}/message`, {
+              method: 'POST',
+              timeoutMs: 180_000,
+              json: payload,
+            })
+            applyOneShot(data)
+            return
+          } catch (err2) {
+            showError(err2)
+            return
+          }
+        }
+        showError(err)
       } finally {
         setLoading(false)
       }
@@ -283,14 +315,10 @@ function App() {
     // Ask backend to create a new session so subsequent messages
     // land in a fresh conversation instead of the previous active one.
     try {
-      const r = await fetch(`${API_BASE}/sessions`, {
+      const data = await apiFetch<{ session_id: string }>(`${API_BASE}/sessions`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${authToken}` },
       })
-      if (r.ok) {
-        const data = await r.json()
-        setActiveSessionId(data.session_id)
-      }
+      setActiveSessionId(data.session_id)
     } catch {
       // Fallback: the backend will create a session on first message
     }
@@ -302,12 +330,9 @@ function App() {
   const handleExport = useCallback(async (sessionId: string, format: 'pdf' | 'markdown' | 'docx') => {
     try {
       setExportingSessionId(sessionId)
-      const token = localStorage.getItem('auth_token')
-      const response = await fetch(
+      const response = await rawFetch(
         `/api/frontend/sessions/${sessionId}/export?format=${format}`,
-        { headers: { Authorization: `Bearer ${token}` } }
       )
-      if (!response.ok) throw new Error('Export failed')
       const blob = await response.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -416,7 +441,7 @@ function App() {
 
       {/* Main */}
       <main className="flex-1 flex flex-col min-w-0">
-        <DashboardTopBar onOpenDrawer={() => setDrawerOpen(true)} isHome={messages.length === 0 && !historyLoading && activeNav === 'assistant'} activeNav={activeNav} username={currentUser.username} onSearchClick={() => setActiveNav('connector')} />
+        <DashboardTopBar onOpenDrawer={() => setDrawerOpen(true)} isHome={messages.length === 0 && !historyLoading && activeNav === 'assistant'} activeNav={activeNav} username={currentUser.username} onSearchClick={() => setActiveNav('connector')} authToken={authToken} />
         {activeNav === 'workspace' ? (
           <div className="flex-1 flex flex-col min-h-0 view-enter">
             <WorkspaceView />

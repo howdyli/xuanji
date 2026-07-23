@@ -43,6 +43,7 @@ class Runner:
         data_dir: Path | None = None,
         hook_registry: HookRegistry | None = None,
         event_bus: "EventBus | None" = None,
+        role_resolver: "Callable[[InboundMessage], str] | None" = None,
     ) -> None:
         self._session_mgr = session_mgr
         self._sender = sender
@@ -53,6 +54,10 @@ class Runner:
 
         self._hook_registry = hook_registry
         self._event_bus = event_bus
+        # Optional RBAC role resolver: maps an inbound message to a role string
+        # (e.g. "admin"/"editor"/"viewer") consumed by permission_gate. When
+        # unset, role stays "" and the gate behaves exactly as before.
+        self._role_resolver = role_resolver
 
         if self._event_bus is None:
             logger.warning(
@@ -67,6 +72,17 @@ class Runner:
         self._dispatch_lock = asyncio.Lock()
         self._pending_index_tasks: set[asyncio.Task] = set()
         self._shutting_down = False
+
+    def set_role_resolver(
+        self, resolver: "Callable[[InboundMessage], str] | None"
+    ) -> None:
+        """Install (or clear) the RBAC role resolver after construction.
+
+        The Runner is built before the user store exists (see main.py), so the
+        resolver is wired in later once auth is available. Passing ``None``
+        restores the default behaviour (role stays "").
+        """
+        self._role_resolver = resolver
 
     async def dispatch(self, inbound: InboundMessage) -> None:
         if self._shutting_down:
@@ -186,11 +202,20 @@ class Runner:
 
             # Create Hook adapter (per-request, session_id bound)
             if self._hook_registry:
+                # Resolve the caller's RBAC role (best-effort; never blocks the
+                # turn on a resolver error).
+                role = ""
+                if self._role_resolver is not None:
+                    try:
+                        role = self._role_resolver(inbound) or ""
+                    except Exception:
+                        logger.warning("role_resolver failed for %s", key, exc_info=True)
                 adapter = CrewObservabilityAdapter(
                     registry=self._hook_registry,
                     session_id=session.id,
                     event_bus=self._event_bus,
                     turn_id=inbound.msg_id,
+                    role=role,
                 )
 
             # EventBus: AGENT_STARTED

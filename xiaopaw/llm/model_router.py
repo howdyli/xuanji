@@ -42,6 +42,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -71,6 +72,57 @@ class RoutingStrategy(str, Enum):
     LATENCY_SENSITIVE = "latency_sensitive"  # 延迟敏感（选响应最快的模型）
     ROUND_ROBIN = "round_robin"              # 轮询均衡（均匀分配请求）
     PRIORITY = "priority"                    # 优先级队列（按配置顺序尝试）
+    COMPLEXITY_BASED = "complexity_based"    # 复杂度自适应（按 prompt 复杂度自动选档）
+
+
+# ── 复杂度自适应路由（P2-3）────────────────────────────
+# 关键词命中会显著抬升复杂度评分：复杂推理/代码/架构/多步任务更需要高质量模型。
+_COMPLEXITY_KEYWORDS = (
+    "分析", "推理", "证明", "设计", "架构", "算法", "优化", "调试", "排查",
+    "重构", "方案", "对比", "评估", "规划", "数学", "逐步", "step by step",
+    "analyze", "reasoning", "design", "architecture", "algorithm", "optimize",
+    "debug", "refactor", "prove", "derive", "strategy",
+)
+
+# 复杂度分档阈值（0~1）：≥HIGH 走质量优先，≥MID 走延迟敏感，否则成本优先。
+COMPLEXITY_HIGH = 0.66
+COMPLEXITY_MID = 0.33
+
+
+def estimate_prompt_complexity(prompt: str) -> float:
+    """根据启发式规则估算 prompt 复杂度，返回 0.0~1.0 的归一化评分。
+
+    评分维度（相加后 clamp 到 [0,1]）：
+    - 长度：越长越可能复杂（每 400 字符 +0.15，上限 0.45）
+    - 代码块：包含 ``` 代码围栏 +0.25
+    - 复杂关键词：命中 _COMPLEXITY_KEYWORDS 每个 +0.12，上限 0.36
+    - 多步/多问：出现多个问号或有序列表标记 +0.15
+
+    这是无状态纯函数，便于单测与在路由层复用。
+    """
+    if not prompt or not prompt.strip():
+        return 0.0
+
+    text = prompt
+    lowered = text.lower()
+    score = 0.0
+
+    # 1. 长度
+    score += min(len(text) / 400.0 * 0.15, 0.45)
+
+    # 2. 代码块
+    if "```" in text:
+        score += 0.25
+
+    # 3. 复杂关键词（去重命中）
+    hits = sum(1 for kw in _COMPLEXITY_KEYWORDS if kw in lowered)
+    score += min(hits * 0.12, 0.36)
+
+    # 4. 多步 / 多问
+    if text.count("?") + text.count("？") >= 2 or re.search(r"(?m)^\s*\d+[.、)]", text):
+        score += 0.15
+
+    return max(0.0, min(score, 1.0))
 
 
 @dataclass
@@ -124,6 +176,9 @@ class ModelStats:
     last_call_time: float = 0.0
     consecutive_failures: int = 0          # 连续失败次数
     error_rate: float = 0.0                # 近期错误率（滑动窗口）
+    total_input_tokens: int = 0            # 累计输入 token
+    total_output_tokens: int = 0           # 累计输出 token
+    estimated_cost_usd: float = 0.0        # 累计估算成本（元/按配置单价）
 
     @property
     def avg_latency_ms(self) -> float:
@@ -328,6 +383,7 @@ class ModelRouter:
         skill_name: str | None = None,
         model_name: str | None = None,
         strategy: RoutingStrategy | str | None = None,
+        prompt: str | None = None,
     ):
         """根据条件返回最优 AliyunLLM 实例。
 
@@ -336,6 +392,8 @@ class ModelRouter:
             skill_name: 技能名称（可选），可用于更细粒度的路由。
             model_name: 强制指定模型名（跳过路由）。
             strategy: 本次调用的路由策略（覆盖默认策略）。
+            prompt: 本次请求的提示词（可选）；当策略为 complexity_based 时
+                用于估算复杂度并自动选档。
 
         Returns:
             AliyunLLM 实例（已配置好所有参数）。
@@ -343,8 +401,6 @@ class ModelRouter:
         Raises:
             ValueError: 无可用模型时抛出。
         """
-        from xiaopaw.llm.aliyun_llm import AliyunLLM
-
         # 1. 如果强制指定模型，直接创建
         if model_name:
             cfg = self._resolve_model(model_name)
@@ -359,6 +415,10 @@ class ModelRouter:
             if isinstance(strategy, str)
             else (strategy or self._default_strategy)
         )
+
+        # 2.5 复杂度自适应：把 COMPLEXITY_BASED 映射为具体排序策略
+        if resolved_strategy == RoutingStrategy.COMPLEXITY_BASED:
+            resolved_strategy = self._strategy_for_prompt(prompt)
 
         # 3. 获取候选列表
         candidates = self._get_candidates(resolved_task, skill_name)
@@ -377,6 +437,29 @@ class ModelRouter:
         )
 
         return self._create_llm(selected_cfg)
+
+    def _strategy_for_prompt(self, prompt: str | None) -> RoutingStrategy:
+        """根据 prompt 复杂度把 COMPLEXITY_BASED 映射为具体排序策略。
+
+        - 高复杂度 (≥COMPLEXITY_HIGH) → 质量优先（选推理/高质量模型）
+        - 中复杂度 (≥COMPLEXITY_MID) → 延迟敏感（兼顾响应速度）
+        - 低复杂度 → 成本优先（简单任务用便宜模型）
+
+        prompt 为空时退化为成本优先。
+        """
+        if not prompt:
+            return RoutingStrategy.COST_FIRST
+        score = estimate_prompt_complexity(prompt)
+        if score >= COMPLEXITY_HIGH:
+            chosen = RoutingStrategy.QUALITY_FIRST
+        elif score >= COMPLEXITY_MID:
+            chosen = RoutingStrategy.LATENCY_SENSITIVE
+        else:
+            chosen = RoutingStrategy.COST_FIRST
+        logger.debug(
+            "complexity routing: score=%.2f → strategy=%s", score, chosen.value
+        )
+        return chosen
 
     # ════════════════════════════════════════════
     # 内部方法
@@ -497,14 +580,32 @@ class ModelRouter:
         model_name: str,
         success: bool,
         latency_ms: float,
+        *,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
     ) -> None:
-        """记录一次调用结果（由外部调用方报告）。"""
+        """记录一次调用结果（由外部调用方报告）。
+
+        input_tokens / output_tokens 为本次调用消耗的 token（可选），
+        会按对应 ModelConfig 的单价累计到估算成本。
+        """
         stats = self._stats.get(model_name)
         if not stats:
             return
 
         stats.total_calls += 1
         stats.last_call_time = time.time()
+
+        # 累计 token 与成本（无论成败都记，成本取决于实际消耗）
+        if input_tokens or output_tokens:
+            stats.total_input_tokens += max(input_tokens, 0)
+            stats.total_output_tokens += max(output_tokens, 0)
+            cfg = self._models.get(model_name)
+            if cfg:
+                stats.estimated_cost_usd += (
+                    max(input_tokens, 0) * cfg.cost_per_1k_tokens / 1000.0
+                    + max(output_tokens, 0) * cfg.cost_per_1k_output / 1000.0
+                )
 
         if success:
             stats.successful_calls += 1
@@ -523,7 +624,7 @@ class ModelRouter:
                 )
 
     def get_stats(self) -> dict[str, Any]:
-        """获取所有模型的运行时统计快照。"""
+        """获取所有模型的运行时统计快照（含 token/成本汇总）。"""
         result: dict[str, Any] = {
             "total_models": len(self._models),
             "available_models": len(self.get_available_models()),
@@ -532,6 +633,10 @@ class ModelRouter:
             "models": {},
         }
 
+        agg_calls = 0
+        agg_input = 0
+        agg_output = 0
+        agg_cost = 0.0
         for name, cfg in self._models.items():
             stats = self._stats.get(name, ModelStats())
             result["models"][name] = {
@@ -546,7 +651,22 @@ class ModelRouter:
                 "avg_latency_ms": round(stats.avg_latency_ms, 1),
                 "error_rate": round(stats.error_rate, 4),
                 "consecutive_failures": stats.consecutive_failures,
+                "total_input_tokens": stats.total_input_tokens,
+                "total_output_tokens": stats.total_output_tokens,
+                "estimated_cost_usd": round(stats.estimated_cost_usd, 6),
             }
+            agg_calls += stats.total_calls
+            agg_input += stats.total_input_tokens
+            agg_output += stats.total_output_tokens
+            agg_cost += stats.estimated_cost_usd
+
+        result["totals"] = {
+            "total_calls": agg_calls,
+            "total_input_tokens": agg_input,
+            "total_output_tokens": agg_output,
+            "total_tokens": agg_input + agg_output,
+            "estimated_cost_usd": round(agg_cost, 6),
+        }
 
         return result
 

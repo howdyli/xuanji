@@ -1,7 +1,8 @@
 // --- Top bar ---
 import { NAV_ITEMS, EXPANDABLE_ITEMS } from './navConfig'
+import { NotificationBell } from './NotificationBell'
 
-export function DashboardTopBar({ onOpenDrawer, isHome, activeNav, username, onSearchClick }: { onOpenDrawer: () => void; isHome?: boolean; activeNav?: string; username?: string; onSearchClick?: () => void }) {
+export function DashboardTopBar({ onOpenDrawer, isHome, activeNav, username, onSearchClick, authToken }: { onOpenDrawer: () => void; isHome?: boolean; activeNav?: string; username?: string; onSearchClick?: () => void; authToken: string }) {
   const hour = new Date().getHours()
   const greetText = hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好'
 
@@ -21,13 +22,13 @@ export function DashboardTopBar({ onOpenDrawer, isHome, activeNav, username, onS
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#10B981', display: 'inline-block' }} />
             <span>AI Ready</span>
           </div>
-          <button className="topbar-button" title="通知" onClick={onOpenDrawer}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-              <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          <button className="topbar-button" title="智能配置" onClick={onOpenDrawer}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
             </svg>
-            <span className="topbar-notification-badge"></span>
           </button>
+          <NotificationBell authToken={authToken} />
         </div>
       </div>
     )
@@ -56,13 +57,7 @@ export function DashboardTopBar({ onOpenDrawer, isHome, activeNav, username, onS
         </button>
 
         {/* Notification button */}
-        <button className="topbar-button" title="通知">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-          </svg>
-          <span className="topbar-notification-badge"></span>
-        </button>
+        <NotificationBell authToken={authToken} />
 
         {/* Settings button */}
         <button

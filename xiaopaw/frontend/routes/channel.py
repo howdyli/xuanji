@@ -175,6 +175,18 @@ async def handle_channels_health(request: web.Request) -> web.Response:
     return web.json_response({"health": mgr.get_health_summary()})
 
 
+async def handle_routing_stats(request: web.Request) -> web.Response:
+    """GET /api/frontend/channels/routing-stats — model router runtime stats.
+
+    Exposes per-model call counts, token usage, estimated cost and health,
+    plus aggregate totals, for the routing cost dashboard (P2-3).
+    """
+    if not check_auth(request):
+        return web.json_response({"error": "unauthorized"}, status=401)
+    from xiaopaw.llm.model_router import model_router
+    return web.json_response(model_router.get_stats())
+
+
 def register_channel_routes(app: web.Application) -> None:
     """Register LLM channel management routes."""
     app.router.add_get("/api/frontend/channels", handle_channels_list)
@@ -184,3 +196,4 @@ def register_channel_routes(app: web.Application) -> None:
     app.router.add_post("/api/frontend/channels/{name}/test", handle_channel_test)
     app.router.add_post("/api/frontend/channels/{name}/fetch-models", handle_channel_fetch_models)
     app.router.add_get("/api/frontend/channels/health", handle_channels_health)
+    app.router.add_get("/api/frontend/channels/routing-stats", handle_routing_stats)

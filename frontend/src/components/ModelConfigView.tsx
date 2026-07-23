@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { apiFetch, ApiError } from '../api/client'
 
 // ── Icons ──────────────────────────────────────────────────────────
 
@@ -62,6 +63,36 @@ interface ModelConfigViewProps {
   authToken: string
 }
 
+interface RoutingModelStat {
+  display_name: string
+  provider: string
+  enabled: boolean
+  healthy: boolean
+  total_calls: number
+  successful_calls: number
+  failed_calls: number
+  success_rate: number
+  avg_latency_ms: number
+  total_input_tokens: number
+  total_output_tokens: number
+  estimated_cost_usd: number
+}
+
+interface RoutingStats {
+  total_models: number
+  available_models: number
+  default_model: string | null
+  default_strategy: string
+  models: Record<string, RoutingModelStat>
+  totals: {
+    total_calls: number
+    total_input_tokens: number
+    total_output_tokens: number
+    total_tokens: number
+    estimated_cost_usd: number
+  }
+}
+
 const API = '/api/frontend/channels'
 
 // ── Main Component ─────────────────────────────────────────────────
@@ -72,44 +103,44 @@ export function ModelConfigView({ authToken }: ModelConfigViewProps) {
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [testingChannel, setTestingChannel] = useState<string | null>(null)
   const [fetchingModels, setFetchingModels] = useState<string | null>(null)
-
-  const headers = {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${authToken}`,
-  }
+  const [routingStats, setRoutingStats] = useState<RoutingStats | null>(null)
 
   const fetchChannels = useCallback(async () => {
     try {
-      const res = await fetch(API, { headers })
-      if (res.ok) {
-        const data = await res.json()
-        setChannels(data.channels || [])
-      }
+      const data = await apiFetch<{ channels?: Channel[] }>(API)
+      setChannels(data.channels || [])
     } catch { /* ignore */ }
     finally { setLoading(false) }
-  }, [authToken]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => { fetchChannels() }, [fetchChannels])
 
+  const fetchRoutingStats = useCallback(async () => {
+    try {
+      const data = await apiFetch<RoutingStats>(`${API}/routing-stats`)
+      setRoutingStats(data)
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => { fetchRoutingStats() }, [fetchRoutingStats])
+
   const toggleChannel = useCallback(async (name: string, enabled: boolean) => {
-    await fetch(`${API}/${name}`, {
-      method: 'PUT', headers,
-      body: JSON.stringify({ enabled: !enabled }),
-    })
+    await apiFetch(`${API}/${name}`, { method: 'PUT', json: { enabled: !enabled } })
     fetchChannels()
-  }, [authToken, fetchChannels]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchChannels])
 
   const deleteChannel = useCallback(async (name: string) => {
     if (!confirm(`确定删除渠道「${name}」吗？`)) return
-    await fetch(`${API}/${name}`, { method: 'DELETE', headers })
+    await apiFetch(`${API}/${name}`, { method: 'DELETE' })
     fetchChannels()
-  }, [authToken, fetchChannels]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchChannels])
 
   const testChannel = useCallback(async (name: string) => {
     setTestingChannel(name)
     try {
-      const res = await fetch(`${API}/${name}/test`, { method: 'POST', headers })
-      const data = await res.json()
+      const data = await apiFetch<{ ok: boolean; latency_ms: number; error: string }>(
+        `${API}/${name}/test`, { method: 'POST' },
+      )
       if (data.ok) {
         alert(`✅ ${name} 连通成功 (${data.latency_ms}ms)`)
       } else {
@@ -121,13 +152,14 @@ export function ModelConfigView({ authToken }: ModelConfigViewProps) {
       setTestingChannel(null)
       fetchChannels()
     }
-  }, [authToken, fetchChannels]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchChannels])
 
   const fetchModels = useCallback(async (name: string) => {
     setFetchingModels(name)
     try {
-      const res = await fetch(`${API}/${name}/fetch-models`, { method: 'POST', headers })
-      const data = await res.json()
+      const data = await apiFetch<{ models?: string[] }>(
+        `${API}/${name}/fetch-models`, { method: 'POST' },
+      )
       if (data.models?.length) {
         alert(`已获取 ${data.models.length} 个模型`)
       } else {
@@ -139,7 +171,7 @@ export function ModelConfigView({ authToken }: ModelConfigViewProps) {
       setFetchingModels(null)
       fetchChannels()
     }
-  }, [authToken, fetchChannels]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchChannels])
 
   const handleChannelCreated = useCallback(() => {
     setShowAddDialog(false)
@@ -246,6 +278,9 @@ export function ModelConfigView({ authToken }: ModelConfigViewProps) {
         </section>
       )}
 
+      {/* Routing Cost Dashboard (P2-3) */}
+      <RoutingStatsPanel stats={routingStats} onRefresh={fetchRoutingStats} />
+
       {/* Add Dialog */}
       {showAddDialog && (
         <AddChannelDialog
@@ -254,6 +289,98 @@ export function ModelConfigView({ authToken }: ModelConfigViewProps) {
           onCreated={handleChannelCreated}
         />
       )}
+    </div>
+  )
+}
+
+// ── Routing Cost Dashboard (P2-3) ──────────────────────────────────
+
+function fmtCost(usd: number): string {
+  if (usd <= 0) return '¥0'
+  if (usd < 0.01) return `¥${usd.toFixed(4)}`
+  return `¥${usd.toFixed(2)}`
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return String(n)
+}
+
+function RoutingStatsPanel({ stats, onRefresh }: { stats: RoutingStats | null; onRefresh: () => void }) {
+  if (!stats) return null
+  const rows = Object.entries(stats.models)
+  const active = rows.filter(([, m]) => m.total_calls > 0)
+  const { totals } = stats
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h2 className="text-[15px] font-medium t-text-primary">路由成本看板</h2>
+          <p className="text-[12px] t-text-tertiary mt-0.5">
+            默认策略 <span className="font-medium">{stats.default_strategy}</span>
+            {stats.default_model ? ` · 默认模型 ${stats.default_model}` : ''}
+          </p>
+        </div>
+        <button
+          onClick={onRefresh}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border t-border-primary text-[12px] t-text-secondary hover:t-bg-tertiary transition-colors"
+        >
+          <RefreshIcon />
+          <span>刷新</span>
+        </button>
+      </div>
+
+      {/* Totals */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+        <StatCard label="总调用" value={String(totals.total_calls)} />
+        <StatCard label="总 Token" value={fmtTokens(totals.total_tokens)} />
+        <StatCard label="估算成本" value={fmtCost(totals.estimated_cost_usd)} />
+        <StatCard label="活跃模型" value={`${stats.available_models}/${stats.total_models}`} />
+      </div>
+
+      {active.length === 0 ? (
+        <div className="rounded-xl border border-dashed t-border-primary p-6 text-center text-[13px] t-text-tertiary">
+          暂无调用数据，发起对话后将实时统计各模型的调用量与成本。
+        </div>
+      ) : (
+        <div className="rounded-xl border t-border-primary overflow-hidden">
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="t-bg-tertiary border-b t-border-primary">
+                <th className="text-left px-4 py-2.5 font-medium t-text-secondary">模型</th>
+                <th className="text-right px-4 py-2.5 font-medium t-text-secondary">调用</th>
+                <th className="text-right px-4 py-2.5 font-medium t-text-secondary">成功率</th>
+                <th className="text-right px-4 py-2.5 font-medium t-text-secondary">均延迟</th>
+                <th className="text-right px-4 py-2.5 font-medium t-text-secondary">Token</th>
+                <th className="text-right px-4 py-2.5 font-medium t-text-secondary">成本</th>
+              </tr>
+            </thead>
+            <tbody>
+              {active.map(([name, m], i) => (
+                <tr key={name} className={`border-b t-border-primary ${i % 2 === 0 ? '' : 't-bg-secondary'}`}>
+                  <td className="px-4 py-2.5 font-medium t-text-primary">{m.display_name || name}</td>
+                  <td className="px-4 py-2.5 text-right t-text-secondary">{m.total_calls}</td>
+                  <td className="px-4 py-2.5 text-right t-text-secondary">{(m.success_rate * 100).toFixed(0)}%</td>
+                  <td className="px-4 py-2.5 text-right t-text-secondary">{m.avg_latency_ms}ms</td>
+                  <td className="px-4 py-2.5 text-right t-text-secondary">{fmtTokens(m.total_input_tokens + m.total_output_tokens)}</td>
+                  <td className="px-4 py-2.5 text-right t-text-secondary">{fmtCost(m.estimated_cost_usd)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border t-border-primary px-4 py-3">
+      <div className="text-[11px] t-text-tertiary">{label}</div>
+      <div className="text-[18px] font-semibold t-text-primary mt-0.5">{value}</div>
     </div>
   )
 }
@@ -436,13 +563,9 @@ function AddChannelDialog({
         .map((s) => s.trim())
         .filter(Boolean)
 
-      const res = await fetch(API, {
+      await apiFetch(API, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({
+        json: {
           name: name.trim(),
           base_url: baseUrl.trim(),
           api_key: apiKey,
@@ -450,16 +573,11 @@ function AddChannelDialog({
           default_model: defaultModel.trim(),
           timeout,
           models,
-        }),
+        },
       })
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data.error || '创建失败')
-        return
-      }
       onCreated()
-    } catch {
-      setError('网络错误')
+    } catch (e) {
+      setError(e instanceof ApiError && e.status > 0 ? (e.message || '创建失败') : '网络错误')
     } finally {
       setSaving(false)
     }

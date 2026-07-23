@@ -263,6 +263,31 @@ class UserAuth:
             "created_at": row[4],
         }
 
+    def get_user_by_username(self, username: str) -> dict | None:
+        """Get user info by username (used by RBAC role resolution).
+
+        Returns the same shape as :meth:`get_user`, or ``None`` when no user
+        matches. Only frontend-originated messages carry a username as the
+        inbound ``sender_id``; feishu open_ids and system actors will not
+        resolve here and safely yield ``None``.
+        """
+        if not username:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, username, is_admin, org_id, created_at FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "username": row[1],
+            "is_admin": bool(row[2]),
+            "org_id": row[3],
+            "created_at": row[4],
+        }
+
     # ── organizations (multi-tenant) ──────────────────────────────────
 
     def get_default_org_id(self) -> int | None:
