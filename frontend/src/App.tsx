@@ -16,6 +16,7 @@ import { ExploreIcon } from './components/icons'
 import { SkillManagerView } from './components/SkillManagerView'
 import { MarketplaceView } from './components/MarketplaceView'
 import { WorkspaceView } from './components/WorkspaceView'
+import { ExpertManagerView } from './components/ExpertManagerView'
 import { LoginView } from './components/LoginView'
 import { AutomationManagerView } from './components/AutomationManagerView'
 import { ThemeProvider } from './components/ThemeContext'
@@ -53,9 +54,14 @@ function App() {
 
   const [activeNav, setActiveNav] = useState('assistant')
   const [search, setSearch] = useState('')
-  const [activeExpert] = useState<string | null>(
+  const [activeExpert, setActiveExpert] = useState<string | null>(
     () => localStorage.getItem('active_expert'),
   )
+  const handleSelectExpert = useCallback((name: string | null) => {
+    setActiveExpert(name)
+    if (name) localStorage.setItem('active_expert', name)
+    else localStorage.removeItem('active_expert')
+  }, [])
   const [showAppearance, setShowAppearance] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -491,6 +497,16 @@ function App() {
         ) : activeNav === 'team' ? (
           <div className="flex-1 flex flex-col min-h-0 view-enter">
             {authToken && <TeamPanel authToken={authToken} />}
+          </div>
+        ) : activeNav === 'expert' ? (
+          <div className="flex-1 flex flex-col min-h-0 view-enter">
+            {authToken && (
+              <ExpertManagerView
+                authToken={authToken}
+                activeExpert={activeExpert}
+                onSelectExpert={handleSelectExpert}
+              />
+            )}
           </div>
         ) : messages.length === 0 && !historyLoading ? (
           /* ── Unified Workspace: Home state ── */

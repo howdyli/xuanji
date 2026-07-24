@@ -448,3 +448,170 @@ class ExpertRegistry:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
+
+
+# ── Built-in featured scenarios ───────────────────────────────────────────
+# Each scenario groups a few built-in experts under a usage theme. Only expert
+# ``name`` values that exist in the registry are shown (invalid refs are
+# filtered at query time), so every default scenario references real experts.
+
+_DEFAULT_SCENARIOS = [
+    {
+        "key": "content_create",
+        "title": "内容创作",
+        "subtitle": "从创意到成品的多模态内容生产",
+        "icon": "content",
+        "gradient": "pink",
+        "expert_names": ["content_team", "research_team"],
+        "sort_order": 10,
+    },
+    {
+        "key": "invest_analysis",
+        "title": "投资分析",
+        "subtitle": "多角色协作的投研与风险评估",
+        "icon": "trading",
+        "gradient": "amber",
+        "expert_names": ["trading_team", "stock_research"],
+        "sort_order": 20,
+    },
+    {
+        "key": "deep_research",
+        "title": "深度研究",
+        "subtitle": "多源聚合、带引用的专业报告",
+        "icon": "research",
+        "gradient": "violet",
+        "expert_names": ["research_team", "content_team"],
+        "sort_order": 30,
+    },
+    {
+        "key": "small_business",
+        "title": "一人公司",
+        "subtitle": "个人创业者的商业模式与增长",
+        "icon": "opc",
+        "gradient": "orange",
+        "expert_names": ["opc_team", "ip_partner"],
+        "sort_order": 40,
+    },
+    {
+        "key": "tech_delivery",
+        "title": "技术交付",
+        "subtitle": "从需求到上线的研发与运维",
+        "icon": "dev",
+        "gradient": "sky",
+        "expert_names": ["dev_team", "cloud_support"],
+        "sort_order": 50,
+    },
+]
+
+
+class ScenarioRegistry:
+    """Manages featured-scenario configurations in a SQLite database.
+
+    A scenario is a curated grouping of expert ``name`` references under a usage
+    theme (content creation, investment analysis, …). Persisted in the same
+    ``auth.db`` as :class:`ExpertRegistry`.
+
+    Schema
+    ------
+    expert_scenarios(id, key, title, subtitle, icon, gradient, expert_names,
+                     sort_order, created_at, updated_at)
+    """
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = Path(db_path)
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+        self._init_defaults()
+
+    # ── schema ────────────────────────────────────────────────────────
+
+    def _init_db(self) -> None:
+        with self._connect() as conn:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS expert_scenarios (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    key TEXT UNIQUE NOT NULL,
+                    title TEXT NOT NULL,
+                    subtitle TEXT NOT NULL DEFAULT '',
+                    icon TEXT NOT NULL DEFAULT 'expert',
+                    gradient TEXT NOT NULL DEFAULT 'sky',
+                    expert_names TEXT NOT NULL DEFAULT '[]',
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+            """)
+
+    def _init_defaults(self) -> None:
+        """Insert built-in scenarios if missing (idempotent by ``key``)."""
+        with self._connect() as conn:
+            existing = {
+                row[0]
+                for row in conn.execute("SELECT key FROM expert_scenarios").fetchall()
+            }
+            now = datetime.now(timezone.utc).isoformat()
+            inserted = 0
+            for sc in _DEFAULT_SCENARIOS:
+                if sc["key"] not in existing:
+                    conn.execute(
+                        """INSERT INTO expert_scenarios
+                           (key, title, subtitle, icon, gradient, expert_names,
+                            sort_order, created_at, updated_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            sc["key"],
+                            sc["title"],
+                            sc["subtitle"],
+                            sc["icon"],
+                            sc["gradient"],
+                            json.dumps(sc["expert_names"], ensure_ascii=False),
+                            sc["sort_order"],
+                            now,
+                            now,
+                        ),
+                    )
+                    inserted += 1
+            if inserted:
+                logger.info("scenario: created %d default scenarios", inserted)
+
+    # ── public API ────────────────────────────────────────────────────
+
+    def list_all(self) -> list[dict]:
+        """Return all scenarios ordered by ``sort_order`` (ascending).
+
+        ``expert_names`` is returned as a decoded list; expert expansion and
+        reference filtering happen at the route layer against the expert
+        registry.
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM expert_scenarios ORDER BY sort_order ASC, id ASC"
+            ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    # ── helpers ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _row_to_dict(row) -> dict:
+        names_raw = row["expert_names"]
+        try:
+            names = json.loads(names_raw) if isinstance(names_raw, str) else names_raw
+        except (json.JSONDecodeError, TypeError):
+            names = []
+        if not isinstance(names, list):
+            names = []
+        return {
+            "key": row["key"],
+            "title": row["title"],
+            "subtitle": row["subtitle"],
+            "icon": row["icon"],
+            "gradient": row["gradient"],
+            "expert_names": names,
+            "sort_order": row["sort_order"],
+        }
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self._db_path))
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn

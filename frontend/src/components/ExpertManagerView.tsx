@@ -5,7 +5,7 @@
  * 卡片：插画风头像 + 角色名 + 团队名 + 简介 + 技能标签 + 召唤按钮
  * 标签：按领域着色 + 小图标前缀 + 状态变体（普通/推荐/热门）
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiFetch } from '../api/client'
 
 const API_BASE = '/api/frontend'
@@ -31,6 +31,22 @@ export interface Expert {
 interface Category {
   name: string
   count: number
+}
+
+// Featured-scenario types (backend inlines up to 3 valid experts per scenario)
+interface ScenarioExpert {
+  name: string
+  display_name: string
+  icon: string
+  team: string
+}
+interface Scenario {
+  key: string
+  title: string
+  subtitle: string
+  icon: string
+  gradient: string
+  experts: ScenarioExpert[]
 }
 
 // ─── Inline icons ───────────────────────────────────────────────────────
@@ -69,6 +85,11 @@ const TrashSvg = () => (
 const ChevronDownSvg = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <polyline points="6 9 12 15 18 9" />
+  </svg>
+)
+const ChevronRightSvg = ({ size = 16 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="9 18 15 12 9 6" />
   </svg>
 )
 
@@ -610,6 +631,125 @@ function GridSkeleton() {
   )
 }
 
+// ─── Featured scenarios ─────────────────────────────────────────────────
+// Theme gradient keys → Tailwind gradient classes (sky-based palette, aligned
+// with the #3898EC brand tone used across sidebar / login).
+const SCENARIO_GRADIENTS: Record<string, string> = {
+  sky: 'from-sky-400 to-blue-500',
+  violet: 'from-violet-400 to-indigo-500',
+  pink: 'from-pink-400 to-rose-500',
+  amber: 'from-amber-400 to-orange-500',
+  orange: 'from-orange-400 to-rose-500',
+  cyan: 'from-cyan-400 to-sky-500',
+}
+function scenarioGradient(key: string): string {
+  return SCENARIO_GRADIENTS[key] || SCENARIO_GRADIENTS.sky
+}
+
+function ScenarioCard({
+  scenario,
+  onExpertClick,
+}: {
+  scenario: Scenario
+  onExpertClick: (name: string) => void
+}) {
+  return (
+    <div className="shrink-0 w-[260px] bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+      {/* Themed header */}
+      <div className={`relative px-4 py-3.5 bg-gradient-to-br ${scenarioGradient(scenario.gradient)} text-white`}>
+        <div className="text-2xl leading-none">{ICON_EMOJIS[scenario.icon] || ICON_EMOJIS.expert}</div>
+        <div className="mt-2 text-[15px] font-semibold leading-tight">{scenario.title}</div>
+        {scenario.subtitle && (
+          <div className="mt-0.5 text-[11.5px] text-white/85 leading-snug line-clamp-2">{scenario.subtitle}</div>
+        )}
+      </div>
+      {/* Recommended experts */}
+      <div className="p-2.5 space-y-1">
+        {scenario.experts.map((ex) => (
+          <button
+            key={ex.name}
+            onClick={() => onExpertClick(ex.name)}
+            className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-gray-50 text-left transition-colors"
+          >
+            <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${gradientOf(ex.name)} flex items-center justify-center shrink-0 text-[15px] ring-2 ring-white shadow-sm`}>
+              {ICON_EMOJIS[ex.icon] || ICON_EMOJIS.expert}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[12.5px] font-medium text-gray-800 truncate">{ex.display_name}</div>
+              <div className="text-[11px] text-gray-400 truncate">{ex.team}</div>
+            </div>
+            <span className="text-gray-300"><ChevronRightSvg size={14} /></span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ScenarioSectionSkeleton() {
+  return (
+    <div className="flex gap-3 overflow-hidden">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="shrink-0 w-[260px] bg-white border border-gray-200 rounded-2xl overflow-hidden">
+          <div className="h-[76px] skeleton-shimmer" />
+          <div className="p-2.5 space-y-2">
+            <div className="h-8 skeleton-shimmer rounded-lg" />
+            <div className="h-8 skeleton-shimmer rounded-lg" />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ScenarioSection({
+  scenarios,
+  loading,
+  onExpertClick,
+}: {
+  scenarios: Scenario[]
+  loading: boolean
+  onExpertClick: (name: string) => void
+}) {
+  const trackRef = useRef<HTMLDivElement>(null)
+  // US-3: failed/empty → hide the whole section (do not block the grid).
+  if (!loading && scenarios.length === 0) return null
+
+  const scrollRight = () => {
+    trackRef.current?.scrollBy({ left: 280, behavior: 'smooth' })
+  }
+
+  return (
+    <div className="mt-4">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-[14px] font-medium text-gray-800">精选场景</h2>
+      </div>
+      {loading ? (
+        <ScenarioSectionSkeleton />
+      ) : (
+        <div className="relative">
+          <div ref={trackRef} className="flex gap-3 overflow-x-auto pb-1 scroll-smooth scrollbar-thin">
+            {scenarios.map((s, idx) => (
+              <div key={s.key} className="animate-fade-in" style={{ animationDelay: `${idx * 50}ms` }}>
+                <ScenarioCard scenario={s} onExpertClick={onExpertClick} />
+              </div>
+            ))}
+          </div>
+          {/* Right fade + paging control */}
+          <div className="pointer-events-none absolute top-0 right-0 h-full w-16 bg-gradient-to-l from-gray-50/95 to-transparent" />
+          <button
+            onClick={scrollRight}
+            className="absolute top-1/2 right-1 -translate-y-1/2 w-8 h-8 rounded-full bg-white border border-gray-200 shadow-sm flex items-center justify-center text-gray-600 hover:bg-gray-50"
+            aria-label="向右滚动"
+          >
+            <ChevronRightSvg />
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main View ──────────────────────────────────────────────────────────
 export function ExpertManagerView({ authToken, activeExpert, onSelectExpert }: ExpertManagerViewProps) {
   const [experts, setExperts] = useState<Expert[]>([])
@@ -622,6 +762,8 @@ export function ExpertManagerView({ authToken, activeExpert, onSelectExpert }: E
   const [editingExpert, setEditingExpert] = useState<Expert | null>(null)
   const [toast, setToast] = useState('')
   const [err, setErr] = useState('')
+  const [scenarios, setScenarios] = useState<Scenario[]>([])
+  const [scenariosLoading, setScenariosLoading] = useState(true)
 
   const fireToast = useCallback((msg: string) => {
     setToast(msg)
@@ -649,7 +791,31 @@ export function ExpertManagerView({ authToken, activeExpert, onSelectExpert }: E
     } catch { /* ignore */ }
   }, [])
 
+  // Featured scenarios load independently; failure hides the section only.
+  const loadScenarios = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ scenarios?: Scenario[] }>(`${API_BASE}/expert-scenarios`)
+      setScenarios(data.scenarios || [])
+    } catch {
+      setScenarios([])
+    } finally {
+      setScenariosLoading(false)
+    }
+  }, [])
+
   useEffect(() => { loadExperts(); loadCategories() }, [loadExperts, loadCategories])
+  useEffect(() => { loadScenarios() }, [loadScenarios])
+
+  // Open an expert's detail drawer by name (from a scenario card). Reuse the
+  // already-loaded list; fall back to a single fetch when filtered out.
+  const openExpertByName = useCallback(async (name: string) => {
+    const local = experts.find((e) => e.name === name)
+    if (local) { setDetail(local); return }
+    try {
+      const full = await apiFetch<Expert>(`${API_BASE}/experts/${encodeURIComponent(name)}`)
+      if (full && full.name) setDetail(full)
+    } catch { /* ignore: expert may have been removed */ }
+  }, [experts])
 
   const filtered = useMemo(() => {
     if (!search) return experts
@@ -708,6 +874,13 @@ export function ExpertManagerView({ authToken, activeExpert, onSelectExpert }: E
             </button>
           </div>
         </div>
+
+        {/* Featured scenarios (above category tabs) */}
+        <ScenarioSection
+          scenarios={scenarios}
+          loading={scenariosLoading}
+          onExpertClick={openExpertByName}
+        />
 
         {/* Category tabs */}
         <CategoryTabs

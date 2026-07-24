@@ -502,8 +502,9 @@ async def main() -> None:
                 logger.warning("sessions.org_id backfill skipped: %s", exc)
 
         # Initialize expert registry (reuses auth.db)
-        from xiaopaw.frontend.expert import ExpertRegistry
+        from xiaopaw.frontend.expert import ExpertRegistry, ScenarioRegistry
         expert_registry = ExpertRegistry(data_dir / "auth.db")
+        scenario_registry = ScenarioRegistry(data_dir / "auth.db")
 
         # Initialize channel manager (LLM provider management)
         from xiaopaw.llm.channel_manager import ChannelManager
@@ -522,6 +523,7 @@ async def main() -> None:
             workspace_dir=str(workspace_dir.resolve()),
             user_auth=user_auth,
             expert_registry=expert_registry,
+            scenario_registry=scenario_registry,
             automation_registry=automation_registry,
             channel_manager=channel_manager,
             community_registry=community_registry,

@@ -46,6 +46,7 @@ def create_frontend_app(
     workspace_dir: str | None = None,
     user_auth: Any = None,
     expert_registry: Any = None,
+    scenario_registry: Any = None,
     automation_registry: Any = None,
     channel_manager: Any = None,
     community_registry: Any = None,
@@ -72,6 +73,7 @@ def create_frontend_app(
     app["workspace_dir"] = workspace_dir or ""
     app["user_auth"] = user_auth
     app["expert_registry"] = expert_registry
+    app["scenario_registry"] = scenario_registry
     app["automation_registry"] = automation_registry
     app["channel_manager"] = channel_manager
     app["community_registry"] = community_registry
