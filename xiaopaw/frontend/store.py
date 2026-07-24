@@ -203,7 +203,17 @@ class PGStore:
                         (session_id, limit),
                     )
                 rows = cur.fetchall()
-                return [dict(r) for r in rows]
+                # created_at comes back as a datetime from PG; normalize it to an
+                # ISO string so callers can json.dumps the rows directly (matching
+                # the in-memory activity format where created_at is already a string).
+                results: list[dict[str, Any]] = []
+                for r in rows:
+                    row = dict(r)
+                    created = row.get("created_at")
+                    if hasattr(created, "isoformat"):
+                        row["created_at"] = created.isoformat()
+                    results.append(row)
+                return results
         except psycopg2.Error as exc:
             logger.warning("PGStore: fetch_activities failed: %s", exc)
             return []

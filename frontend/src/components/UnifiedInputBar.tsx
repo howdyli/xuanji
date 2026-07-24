@@ -127,12 +127,12 @@ export function UnifiedInputBar({
 
           <div className="flex items-center justify-between mt-2.5 pt-2.5 border-t border-[rgba(0,0,0,0.08)]">
             <div className="flex items-center gap-1.5">
-              {/* Attachment */}
-              <button className="w-[30px] h-[30px] rounded-[8px] flex items-center justify-center text-[#9b9892] hover:bg-[#f0efe9] hover:text-[#6b6963] transition-colors" title="附件">
+              {/* Attachment — 功能待上线，暂禁用避免误导 */}
+              <button disabled className="w-[30px] h-[30px] rounded-[8px] flex items-center justify-center text-[#c4c1ba] opacity-50 cursor-not-allowed transition-colors" title="附件（即将支持）">
                 <PaperclipIcon />
               </button>
-              {/* Voice */}
-              <button className="w-[30px] h-[30px] rounded-[8px] flex items-center justify-center text-[#9b9892] hover:bg-[#f0efe9] hover:text-[#6b6963] transition-colors" title="语音">
+              {/* Voice — 功能待上线，暂禁用避免误导 */}
+              <button disabled className="w-[30px] h-[30px] rounded-[8px] flex items-center justify-center text-[#c4c1ba] opacity-50 cursor-not-allowed transition-colors" title="语音（即将支持）">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M8 1a2 2 0 0 0-2 2v4a2 2 0 0 0 4 0V3a2 2 0 0 0-2-2z"/>
                   <path d="M12 7a4 4 0 0 1-8 0"/>

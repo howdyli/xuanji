@@ -14,7 +14,7 @@ function TeamIcon() {
 
 export const NAV_ITEMS = [
   { id: 'assistant', label: '工作台', icon: <HomeIcon />, group: 'workflow', iconColor: 'blue' },
-  { id: 'chat', label: '任务', icon: <FolderIcon />, group: 'workflow', iconColor: 'blue', badge: '3' },
+  { id: 'chat', label: '任务', icon: <FolderIcon />, group: 'workflow', iconColor: 'blue' },
   { id: 'team', label: '团队', icon: <TeamIcon />, group: 'workflow', iconColor: 'blue' },
   { id: 'skill', label: '技能', icon: <SkillIcon />, group: 'automation', iconColor: 'purple' },
   { id: 'connector', label: '搜索', icon: <ExploreIcon />, group: 'system', iconColor: 'gray' },

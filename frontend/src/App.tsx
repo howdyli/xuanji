@@ -4,6 +4,7 @@ import type { Message, Session, ApiResponse, CurrentUser } from './types'
 // --- Extracted components ---
 import { Sidebar } from './components/Sidebar'
 import { DashboardHome } from './components/DashboardHome'
+import { TaskListView } from './components/TaskListView'
 import { ComingSoonView } from './components/ComingSoonView'
 import { ChatMessages } from './components/ChatView'
 import { UnifiedInputBar } from './components/UnifiedInputBar'
@@ -448,8 +449,16 @@ function App() {
           </div>
         ) : activeNav === 'chat' ? (
           <div className="flex-1 flex flex-col min-h-0 view-enter">
-            <ChatMessages messages={messages} loading={loading} sessionTitle={sessions.find(s => s.id === activeSessionId)?.title || ''} onOpenDrawer={() => setDrawerOpen(true)} sessionId={activeSessionId} authToken={authToken!} />
-            <UnifiedInputBar isHome={false} loading={loading} onSend={handleSend} sessionId={activeSessionId} inputRef={inputRef} />
+            <TaskListView
+              sessions={sessions}
+              activeSessionId={activeSessionId}
+              onSelect={(id) => {
+                handleSelectSession(id)
+                setActiveNav('assistant')
+                if (window.innerWidth < 1024) setSidebarVisible(false)
+              }}
+              onNewTask={handleNewTask}
+            />
           </div>
         ) : activeNav === 'automation' ? (
           <div className="flex-1 flex flex-col min-h-0 view-enter">

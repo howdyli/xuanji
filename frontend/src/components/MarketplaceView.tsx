@@ -13,6 +13,11 @@
 import { useCallback, useEffect, useReducer, useState } from 'react'
 import type { InstalledSkill } from './SkillManagerView'
 import { AdminReviewView } from './market/AdminReviewView'
+import MarketHome from './market/MarketHome'
+import SearchResults from './market/SearchResults'
+import SkillDetailPage from './market/SkillDetailPage'
+import PublishSkillView from './market/PublishSkillView'
+import MySkillsView from './market/MySkillsView'
 import { apiFetch } from '../api/client'
 
 // ─── API ─────────────────────────────────────────────────────────────────
@@ -258,28 +263,64 @@ export function useMarketplace(authToken: string) {
     } catch { return false }
   }, [fireToast])
 
+  const markReviewHelpful = useCallback(async (reviewId: string) => {
+    try {
+      await apiFetch(`${API_BASE}/reviews/${encodeURIComponent(reviewId)}/helpful`, { method: 'POST' })
+      return true
+    } catch { return false }
+  }, [])
+
+  const withdrawSkill = useCallback(async (name: string) => {
+    try {
+      await apiFetch(`${API_BASE}/skills/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      fireToast('已下架')
+      return true
+    } catch (e) { fireToast(`下架失败：${e instanceof Error ? e.message : String(e)}`); return false }
+  }, [fireToast])
+
+  const fetchInstalled = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ skills?: InstalledSkill[] }>('/api/frontend/skills')
+      dispatch({ type: 'SET_INSTALLED_SKILLS', payload: data.skills ?? [] })
+    } catch { /* silent */ }
+  }, [])
+
   // initial load
   useEffect(() => {
     fetchMarketSkills()
     fetchCategories()
     fetchFeatured()
+    fetchRankings('week')
+    fetchInstalled()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     state, dispatch, fireToast,
-    fetchMarketSkills, fetchCategories, fetchRankings, fetchFeatured,
-    installSkill, fetchSkillDetail, fetchReviews, submitReview,
-    publishSkill, fetchMySkills, fetchFavorites, toggleFavorite,
+    fetchMarketSkills, fetchCategories, fetchRankings, fetchFeatured, fetchInstalled,
+    installSkill, fetchSkillDetail, fetchReviews, submitReview, markReviewHelpful,
+    publishSkill, fetchMySkills, fetchFavorites, toggleFavorite, withdrawSkill,
   }
 }
 
 // ─── MarketplaceView Component ───────────────────────────────────────────
 export function MarketplaceView({ authToken, isAdmin = false }: { authToken: string; isAdmin?: boolean }) {
-  const { state, dispatch, fireToast, fetchMySkills } = useMarketplace(authToken)
+  const {
+    state, dispatch, fireToast,
+    fetchMarketSkills, fetchRankings,
+    installSkill, fetchSkillDetail, fetchReviews, markReviewHelpful,
+    publishSkill, fetchMySkills, fetchFavorites, toggleFavorite,
+    withdrawSkill, fetchInstalled,
+  } = useMarketplace(authToken)
   const [topTab, setTopTab] = useState<TopTab>('market')
   const [pendingCount, setPendingCount] = useState(0)
   const [mySkills, setMySkills] = useState<MarketSkillV2[]>([])
+  const [favorites, setFavorites] = useState<MarketSkillV2[]>([])
+  const [favoriteNames, setFavoriteNames] = useState<Set<string>>(new Set())
+  const [mySkillsTab, setMySkillsTab] = useState<'published' | 'favorites'>('published')
   const [mySkillsLoading, setMySkillsLoading] = useState(false)
+  const [detailSkill, setDetailSkill] = useState<MarketSkillV2 | null>(null)
+  const [detailReviews, setDetailReviews] = useState<Review[]>([])
+  const [detailLoading, setDetailLoading] = useState(false)
 
   const navigateTo = useCallback((view: MarketView) => {
     dispatch({ type: 'SET_VIEW', payload: view })
@@ -301,11 +342,85 @@ export function MarketplaceView({ authToken, isAdmin = false }: { authToken: str
   const loadMySkills = useCallback(async () => {
     setMySkillsLoading(true)
     try {
-      setMySkills(await fetchMySkills())
+      const [pub, favs] = await Promise.all([fetchMySkills(), fetchFavorites()])
+      setMySkills(pub)
+      setFavorites(favs)
+      setFavoriteNames(new Set(favs.map((s) => s.name)))
     } finally {
       setMySkillsLoading(false)
     }
-  }, [fetchMySkills])
+  }, [fetchMySkills, fetchFavorites])
+
+  // Load favorites once so the favorite state is known across market/detail views.
+  useEffect(() => {
+    fetchFavorites().then((favs) => {
+      setFavorites(favs)
+      setFavoriteNames(new Set(favs.map((s) => s.name)))
+    })
+  }, [fetchFavorites])
+
+  const openDetail = useCallback(async (name: string) => {
+    navigateTo({ kind: 'detail', skillName: name })
+    setDetailLoading(true)
+    setDetailSkill(null)
+    try {
+      const [skill, reviews] = await Promise.all([fetchSkillDetail(name), fetchReviews(name)])
+      setDetailSkill(skill)
+      setDetailReviews(reviews)
+    } finally {
+      setDetailLoading(false)
+    }
+  }, [navigateTo, fetchSkillDetail, fetchReviews])
+
+  const handleCategoryChange = useCallback((id: string | null) => {
+    dispatch({ type: 'SET_FILTERS', payload: { category: id } })
+    fetchMarketSkills(id ? { category: id } : undefined)
+  }, [dispatch, fetchMarketSkills])
+
+  const handleSearch = useCallback((query: string) => {
+    dispatch({ type: 'SET_SEARCH_QUERY', payload: query })
+    navigateTo({ kind: 'search', query, filters: state.activeFilters })
+    fetchMarketSkills({ search: query })
+  }, [dispatch, navigateTo, fetchMarketSkills, state.activeFilters])
+
+  const handleFiltersChange = useCallback((filters: FilterState) => {
+    dispatch({ type: 'SET_FILTERS', payload: filters })
+    const params: Record<string, string> = {}
+    if (state.searchQuery) params.search = state.searchQuery
+    if (filters.category) params.category = filters.category
+    if (filters.sortBy) params.sort = filters.sortBy
+    fetchMarketSkills(params)
+  }, [dispatch, fetchMarketSkills, state.searchQuery])
+
+  const handleInstall = useCallback(async (name: string) => {
+    const ok = await installSkill(name)
+    if (ok) fetchInstalled()
+  }, [installSkill, fetchInstalled])
+
+  const handleToggleFavorite = useCallback(async (name: string) => {
+    const isFav = favoriteNames.has(name)
+    const ok = await toggleFavorite(name, isFav)
+    if (ok) {
+      setFavoriteNames((prev) => {
+        const next = new Set(prev)
+        if (isFav) next.delete(name)
+        else next.add(name)
+        return next
+      })
+    }
+  }, [favoriteNames, toggleFavorite])
+
+  const handlePublishSuccess = useCallback(() => {
+    setTopTab('my-skills')
+    setMySkillsTab('published')
+    navigateTo({ kind: 'my-skills', tab: 'published' })
+    loadMySkills()
+  }, [navigateTo, loadMySkills])
+
+  const handlePublish = useCallback(async (formData: FormData) => {
+    const ok = await publishSkill(formData)
+    if (ok) handlePublishSuccess()
+  }, [publishSkill, handlePublishSuccess])
 
   // ── Render content by topTab + currentView ──
   const renderContent = () => {
@@ -319,24 +434,6 @@ export function MarketplaceView({ authToken, isAdmin = false }: { authToken: str
       )
     }
 
-    if (state.loading) {
-      return (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="bg-white border border-gray-200 rounded-xl p-4 animate-pulse min-h-[148px]">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-full bg-gray-100" />
-                <div className="w-12 h-4 rounded bg-gray-100" />
-              </div>
-              <div className="h-4 bg-gray-100 rounded mt-3 w-1/2" />
-              <div className="h-3 bg-gray-100 rounded mt-3 w-full" />
-              <div className="h-3 bg-gray-100 rounded mt-1.5 w-4/5" />
-            </div>
-          ))}
-        </div>
-      )
-    }
-
     if (state.error) {
       return (
         <div className="mb-4 p-3 rounded-lg bg-rose-50 border border-rose-100 text-[12.5px] text-rose-700">
@@ -345,23 +442,92 @@ export function MarketplaceView({ authToken, isAdmin = false }: { authToken: str
       )
     }
 
-    if (topTab === 'market') {
-      const { kind } = state.currentView
-      if (kind === 'search') {
-        return <PlaceholderView title="搜索结果" hint={`关键词: "${state.currentView.query}" — 搜索功能即将上线`} />
-      }
-      if (kind === 'detail') {
-        return <PlaceholderView title="技能详情" hint={`${state.currentView.skillName} — 详情页即将上线`} />
-      }
-      return <PlaceholderView title="市场首页" hint="精选推荐、排行榜、分类浏览 — 即将上线" />
+    const view = state.currentView
+
+    // Publish wizard is reachable from any tab.
+    if (view.kind === 'publish') {
+      return (
+        <PublishSkillView
+          authToken={authToken}
+          categories={state.categories}
+          onPublish={handlePublish}
+          onSuccess={handlePublishSuccess}
+          onCancel={() => navigateTo(topTab === 'my-skills' ? { kind: 'my-skills', tab: 'published' } : { kind: 'home' })}
+          loading={state.loading}
+        />
+      )
+    }
+
+    // Skill detail is shared between market / my-skills contexts.
+    if (view.kind === 'detail') {
+      return (
+        <SkillDetailPage
+          skill={detailSkill}
+          skillName={view.skillName}
+          reviews={detailReviews}
+          authToken={authToken}
+          onBack={() => navigateTo(topTab === 'my-skills' ? { kind: 'my-skills', tab: mySkillsTab } : { kind: 'home' })}
+          onInstall={handleInstall}
+          onMarkHelpful={(id) => { markReviewHelpful(id) }}
+          onToggleFavorite={handleToggleFavorite}
+          isFavorite={favoriteNames.has(view.skillName)}
+          loading={detailLoading}
+        />
+      )
     }
 
     if (topTab === 'installed') {
-      return <PlaceholderView title="已安装技能" hint={`共 ${state.installedSkills.length} 个已安装技能 — 列表即将上线`} />
+      return <InstalledSkillsList skills={state.installedSkills} />
     }
 
-    // my-skills
-    return <MySkillsView skills={mySkills} loading={mySkillsLoading} />
+    if (topTab === 'my-skills') {
+      return (
+        <MySkillsView
+          authToken={authToken}
+          tab={mySkillsTab}
+          onTabChange={(t) => { setMySkillsTab(t); navigateTo({ kind: 'my-skills', tab: t }) }}
+          mySkills={mySkills}
+          favorites={favorites}
+          onSkillClick={openDetail}
+          onWithdraw={async (n) => { const ok = await withdrawSkill(n); if (ok) loadMySkills() }}
+          onRemoveFavorite={async (n) => { await handleToggleFavorite(n); loadMySkills() }}
+          loading={mySkillsLoading}
+        />
+      )
+    }
+
+    // topTab === 'market'
+    if (view.kind === 'search') {
+      return (
+        <SearchResults
+          skills={state.marketSkills}
+          query={view.query}
+          filters={state.activeFilters}
+          categories={state.categories}
+          onFiltersChange={handleFiltersChange}
+          onSkillClick={openDetail}
+          onInstall={handleInstall}
+          onBack={() => navigateTo({ kind: 'home' })}
+          loading={state.loading}
+          viewMode={state.viewMode}
+          onViewModeChange={(m) => dispatch({ type: 'SET_VIEW_MODE', payload: m })}
+        />
+      )
+    }
+    return (
+      <MarketHome
+        featured={state.featured}
+        categories={state.categories}
+        rankings={state.rankings}
+        skills={state.marketSkills}
+        activeCategory={state.activeFilters.category}
+        onCategoryChange={handleCategoryChange}
+        onSkillClick={openDetail}
+        onInstall={handleInstall}
+        onSearch={handleSearch}
+        loading={state.loading}
+      />
+    )
   }
 
   return (
@@ -377,6 +543,16 @@ export function MarketplaceView({ authToken, isAdmin = false }: { authToken: str
               发现、安装和分享社区技能
             </p>
           </div>
+          <button
+            onClick={() => navigateTo({ kind: 'publish' })}
+            className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[13px] font-medium text-white transition-colors"
+            style={{ backgroundColor: 'var(--primary-500, #3B82F6)' }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            发布技能
+          </button>
         </div>
 
         {/* Top Tabs */}
@@ -433,63 +609,29 @@ function TabBtn({ active, children, onClick }: { active: boolean; children: Reac
   )
 }
 
-function PlaceholderView({ title, hint }: { title: string; hint: string }) {
-  return (
-    <div className="text-center py-20">
-      <div className="text-[14px] font-medium" style={{ color: 'var(--text-primary, #374151)' }}>{title}</div>
-      <div className="text-[12.5px] mt-1.5" style={{ color: 'var(--text-secondary, #6b7280)' }}>{hint}</div>
-    </div>
-  )
-}
-
-const STATUS_META: Record<string, { label: string; cls: string }> = {
-  pending: { label: '待审核', cls: 'bg-amber-50 text-amber-700' },
-  approved: { label: '已通过', cls: 'bg-emerald-50 text-emerald-700' },
-  rejected: { label: '已拒绝', cls: 'bg-rose-50 text-rose-700' },
-  suspended: { label: '已下架', cls: 'bg-gray-100 text-gray-600' },
-}
-
-function MySkillsView({ skills, loading }: { skills: MarketSkillV2[]; loading: boolean }) {
-  if (loading) {
+function InstalledSkillsList({ skills }: { skills: InstalledSkill[] }) {
+  if (skills.length === 0) {
     return (
-      <div className="space-y-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="bg-white border border-gray-200 rounded-xl p-4 animate-pulse min-h-[80px]">
-            <div className="h-4 bg-gray-100 rounded w-1/3" />
-            <div className="h-3 bg-gray-100 rounded mt-3 w-4/5" />
-          </div>
-        ))}
+      <div className="text-center py-20">
+        <div className="text-[14px] font-medium" style={{ color: 'var(--text-primary, #374151)' }}>还没有已安装的技能</div>
+        <div className="text-[12.5px] mt-1.5" style={{ color: 'var(--text-secondary, #6b7280)' }}>前往技能市场安装社区技能</div>
       </div>
     )
   }
-  if (skills.length === 0) {
-    return <PlaceholderView title="我的发布" hint="你还没有发布任何技能" />
-  }
   return (
     <div className="space-y-3">
-      {skills.map((s) => {
-        const meta = STATUS_META[s.status || 'pending'] || STATUS_META.pending
-        return (
-          <div key={s.name} className="bg-white border border-gray-200 rounded-xl p-4">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[14px] font-medium text-gray-900">{s.name}</span>
-              <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">v{s.version}</span>
-              {s.visibility === 'private' ? (
-                <span className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">组织内</span>
-              ) : (
-                <span className="text-[11px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700">公开</span>
-              )}
-              <span className={`text-[11px] px-1.5 py-0.5 rounded ${meta.cls}`}>{meta.label}</span>
-            </div>
-            <p className="text-[12.5px] text-gray-600 mt-1.5 break-words">{s.description}</p>
-            {s.status === 'rejected' && s.review_note && (
-              <div className="mt-2 text-[12px] text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-2.5 py-1.5">
-                拒绝原因：{s.review_note}
-              </div>
-            )}
+      {skills.map((s) => (
+        <div key={s.name} className="bg-white border border-gray-200 rounded-xl p-4">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[14px] font-medium text-gray-900">{s.name}</span>
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">v{s.version}</span>
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700">{s.source === 'builtin' ? '内置' : '用户'}</span>
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">{s.type === 'task' ? '任务型' : '参考型'}</span>
+            {!s.enabled && <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">已禁用</span>}
           </div>
-        )
-      })}
+          <p className="text-[12.5px] text-gray-600 mt-1.5 break-words">{s.description}</p>
+        </div>
+      ))}
     </div>
   )
 }

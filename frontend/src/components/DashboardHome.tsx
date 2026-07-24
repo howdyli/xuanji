@@ -5,10 +5,10 @@ import { formatRelativeTime } from '../utils/format'
 
 // --- Quick action cards for dashboard ---
 const DASH_ACTIONS = [
-  { title: '写一份项目方案', desc: '基于需求自动生成结构清晰的项目方案文档，包含目标、里程碑与资源规划', tag: '约 3 分钟', prompt: '帮我写一份项目方案，包含需求梳理、技术选型和实施计划', iconBg: '#e8f1fb', iconColor: '#1a6fbf', icon: <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4"><path d="M4 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" stroke="currentColor" strokeWidth="1.4"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg> },
-  { title: '分析市场数据', desc: '自动采集多源数据，生成可视化图表与深度洞察报告，支持导出 Excel/PPT', tag: '约 5 分钟', prompt: '帮我分析市场数据，生成一份分析报告', iconBg: '#e6f5ee', iconColor: '#2d9e6b', icon: <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4"><path d="M2 12l3.5-4 3 2 3.5-5L15 2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 14h12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg> },
-  { title: '生成演示 PPT', desc: '一键将大纲转换为精美幻灯片，自动排版、配色、配图，支持在线预览与下载', tag: '约 4 分钟', prompt: '帮我生成一份演示PPT', iconBg: '#fef3dc', iconColor: '#b87c16', icon: <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4"><rect x="2" y="3" width="12" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.4"/><path d="M8 12v2M6 14h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/><path d="M6 7h4M6 9h2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg> },
-  { title: '探索历史记忆', desc: '智能检索过往对话与文档，基于语义理解定位关键信息，支持跨会话关联', tag: '即时', prompt: '搜索我的历史记忆，查找相关内容', iconBg: 'rgba(79, 110, 247, 0.1)', iconColor: '#4F6EF7', icon: <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4"><circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.4"/><path d="M5.5 8h5M8 5.5v5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg> },
+  { title: '写一份项目方案', desc: '基于需求自动生成结构清晰的项目方案文档，包含目标、里程碑与资源规划', prompt: '帮我写一份项目方案，包含需求梳理、技术选型和实施计划', iconBg: '#e8f1fb', iconColor: '#1a6fbf', icon: <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4"><path d="M4 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" stroke="currentColor" strokeWidth="1.4"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg> },
+  { title: '分析市场数据', desc: '自动采集多源数据，生成可视化图表与深度洞察报告，支持导出 Excel/PPT', prompt: '帮我分析市场数据，生成一份分析报告', iconBg: '#e6f5ee', iconColor: '#2d9e6b', icon: <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4"><path d="M2 12l3.5-4 3 2 3.5-5L15 2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 14h12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg> },
+  { title: '生成演示 PPT', desc: '一键将大纲转换为精美幻灯片，自动排版、配色、配图，支持在线预览与下载', prompt: '帮我生成一份演示PPT', iconBg: '#fef3dc', iconColor: '#b87c16', icon: <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4"><rect x="2" y="3" width="12" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.4"/><path d="M8 12v2M6 14h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/><path d="M6 7h4M6 9h2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg> },
+  { title: '探索历史记忆', desc: '智能检索过往对话与文档，基于语义理解定位关键信息，支持跨会话关联', prompt: '搜索我的历史记忆，查找相关内容', iconBg: 'rgba(79, 110, 247, 0.1)', iconColor: '#4F6EF7', icon: <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4"><circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.4"/><path d="M5.5 8h5M8 5.5v5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg> },
 ]
 
 // --- Onboarding example tasks for empty state ---
@@ -186,14 +186,6 @@ export function DashboardHome({
                 WebkitBoxOrient: 'vertical',
                 overflow: 'hidden',
               }}>{a.desc}</span>
-              <span style={{
-                fontSize: '11px',
-                color: 'var(--text-tertiary)',
-                background: 'var(--bg-tertiary)',
-                padding: '2px 8px',
-                borderRadius: 'var(--radius-sm)',
-                marginTop: 'auto',
-              }}>{a.tag}</span>
             </button>
             )
           })}
