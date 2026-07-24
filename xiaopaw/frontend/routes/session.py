@@ -111,13 +111,18 @@ async def _prepare_message(
 
     msg_id = f"web_{uuid.uuid4().hex[:12]}"
 
-    # Inject expert system prompt if specified
+    # Resolve expert context out-of-band: keep ``content`` as the user's raw
+    # text (so persistence + title stay clean); the system prompt travels on
+    # the InboundMessage and is only synthesized when feeding the agent.
+    expert_prompt = ""
+    expert_display = ""
     if expert_name:
         expert_reg = request.app.get("expert_registry")
         if expert_reg:
             expert = expert_reg.get(expert_name)
             if expert and expert.get("system_prompt"):
-                content = f"[Expert: {expert['display_name']}]\n{expert['system_prompt']}\n\n---\n\n{content}"
+                expert_prompt = expert["system_prompt"]
+                expert_display = expert.get("display_name", expert_name)
 
     inbound = InboundMessage(
         routing_key=routing_key,
@@ -126,6 +131,8 @@ async def _prepare_message(
         sender_id=sender_id,
         ts=int(time.time() * 1000),
         trace_id=new_trace_id(),
+        expert_prompt=expert_prompt,
+        expert_name=expert_display,
     )
 
     return (

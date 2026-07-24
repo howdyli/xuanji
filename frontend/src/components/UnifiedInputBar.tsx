@@ -2,6 +2,7 @@
 import { useState, useRef } from 'react'
 import { SendIcon, PaperclipIcon, SkillIcon } from './icons'
 import { SessionSkillsPicker } from './SessionSkillsPicker'
+import { useExperts, ExpertPickerPopover, ExpertPickerList } from './ExpertPicker'
 
 // --- Quick command definitions ---
 const QUICK_COMMANDS = [
@@ -20,6 +21,8 @@ export function UnifiedInputBar({
   sessionId,
   inputRef,
   embedded,
+  activeExpert,
+  onSelectExpert,
 }: {
   isHome: boolean
   loading: boolean
@@ -27,10 +30,21 @@ export function UnifiedInputBar({
   sessionId: string | null
   inputRef: React.RefObject<HTMLTextAreaElement | null>
   embedded?: boolean
+  activeExpert: string | null
+  onSelectExpert: (name: string | null) => void
 }) {
   const [text, setText] = useState('')
   const [showCommands, setShowCommands] = useState(false)
   const [sendPressed, setSendPressed] = useState(false)
+  const [showExperts, setShowExperts] = useState(false)
+  const [showMention, setShowMention] = useState(false)
+  const [mentionQuery, setMentionQuery] = useState('')
+  const expertBtnRef = useRef<HTMLButtonElement>(null)
+  const { experts, loading: expertsLoading } = useExperts()
+  const activeExpertObj = activeExpert ? experts.find((e) => e.name === activeExpert) : null
+
+  // “@” 唤起手势：匹配光标处正在输入的 @token（与 / 指令互斥）。
+  const MENTION_RE = /(^|\s)@(\S*)$/
 
   const handleSend = () => {
     const trimmed = text.trim()
@@ -38,6 +52,7 @@ export function UnifiedInputBar({
     onSend(trimmed)
     setText('')
     setShowCommands(false)
+    setShowMention(false)
     setSendPressed(true)
     setTimeout(() => setSendPressed(false), 200)
   }
@@ -48,10 +63,18 @@ export function UnifiedInputBar({
     const el = e.target
     el.style.height = 'auto'
     el.style.height = Math.min(el.scrollHeight, 200) + 'px'
-    if (!isHome && val.startsWith('/') && val.length < 20) {
-      setShowCommands(true)
-    } else {
+    const mention = val.match(MENTION_RE)
+    if (mention) {
+      setShowMention(true)
+      setMentionQuery(mention[2])
       setShowCommands(false)
+    } else {
+      setShowMention(false)
+      if (!isHome && val.startsWith('/') && val.length < 20) {
+        setShowCommands(true)
+      } else {
+        setShowCommands(false)
+      }
     }
   }
 
@@ -59,6 +82,14 @@ export function UnifiedInputBar({
     setText('')
     setShowCommands(false)
     onSend(prompt)
+  }
+
+  // 选中 @ 专家：删除输入框里的 @token（不留字面提及）并激活专家。
+  const handleMentionSelect = (name: string) => {
+    setText((prev) => prev.replace(MENTION_RE, '$1'))
+    setShowMention(false)
+    onSelectExpert(name)
+    inputRef.current?.focus()
   }
 
   const filteredCommands = text.startsWith('/')
@@ -82,6 +113,20 @@ export function UnifiedInputBar({
                   <span className="text-[12px] text-[#1a1917]">{cmd.label}</span>
                 </button>
               ))}
+            </div>
+          )}
+
+          {/* @ 专家内联浮层（关键词实时过滤） */}
+          {showMention && (
+            <div className="absolute bottom-full left-3 right-3 mb-1 bg-white border border-[rgba(0,0,0,0.08)] rounded-[12px] shadow-md overflow-hidden z-10 animate-fade-in">
+              <ExpertPickerList
+                experts={experts}
+                loading={expertsLoading}
+                query={mentionQuery}
+                activeName={activeExpert}
+                onSelect={handleMentionSelect}
+                showSearch={false}
+              />
             </div>
           )}
 
@@ -111,15 +156,31 @@ export function UnifiedInputBar({
             </div>
           )}
 
+          {/* 当前专家芯片（可一键取消） */}
+          {activeExpert && (
+            <div className="flex items-center gap-1.5 mb-2 w-fit pl-2 pr-1.5 py-1 rounded-full bg-[#E9F3FB] border border-[#cfe4f5] text-[12px] text-[#185FA5]">
+              <span className="leading-none">🧠</span>
+              <span className="truncate max-w-[160px]">当前专家：{activeExpertObj?.display_name || activeExpert}</span>
+              <button
+                type="button"
+                onClick={() => onSelectExpert(null)}
+                className="w-4 h-4 rounded-full flex items-center justify-center text-[#4A6B82] hover:bg-white hover:text-[#185FA5] transition-colors"
+                title="取消召唤"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           <textarea
             ref={inputRef}
             value={text}
             onChange={handleInput}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
-              if (e.key === 'Escape') setShowCommands(false)
+              if (e.key === 'Escape') { setShowCommands(false); setShowMention(false) }
             }}
-            placeholder={isHome ? '描述你的任务或问题…' : '继续对话，或输入 / 调用指令…'}
+            placeholder={isHome ? '描述你的任务或问题，或输入 @ 召唤专家…' : '继续对话，或输入 / 调用指令、@ 召唤专家…'}
             rows={2}
             disabled={loading}
             className="w-full min-h-[40px] resize-none border-none outline-none text-[13px] text-[#1a1917] leading-relaxed bg-transparent placeholder:text-[#9b9892] disabled:opacity-50"
@@ -139,6 +200,31 @@ export function UnifiedInputBar({
                   <path d="M8 11v3"/>
                 </svg>
               </button>
+              {/* Expert button (home + chat) */}
+              <div className="relative">
+                <button
+                  ref={expertBtnRef}
+                  type="button"
+                  onClick={() => { setShowExperts((v) => !v); setShowCommands(false); setShowMention(false) }}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] border transition-colors ${
+                    showExperts || activeExpert
+                      ? 'bg-[#3898EC] text-white border-[#3898EC]'
+                      : 'text-gray-600 border-transparent hover:bg-white hover:border-gray-200'
+                  }`}
+                >
+                  <span className="text-[13px] leading-none">🧠</span>
+                  <span>专家</span>
+                </button>
+                <ExpertPickerPopover
+                  open={showExperts}
+                  onClose={() => setShowExperts(false)}
+                  activeName={activeExpert}
+                  onSelect={(name) => { onSelectExpert(name); setShowExperts(false) }}
+                  experts={experts}
+                  loading={expertsLoading}
+                  anchorEl={expertBtnRef.current}
+                />
+              </div>
               {/* Skill button in chat mode */}
               {!isHome && <SkillButton sessionId={sessionId} />}
             </div>

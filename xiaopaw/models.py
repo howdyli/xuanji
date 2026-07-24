@@ -25,6 +25,11 @@ class InboundMessage:
     is_cron: bool = False
     attachment: Attachment | None = None
     trace_id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
+    # Expert context injected out-of-band: the prompt is prepended only when
+    # feeding the agent, never written into ``content`` (keeps persisted
+    # messages and session titles free of the system prompt).
+    expert_prompt: str = ""
+    expert_name: str = ""
 
 
 class SenderProtocol(Protocol):

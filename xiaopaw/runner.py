@@ -265,8 +265,15 @@ class Runner:
             # Run agent (with adapter available via ContextVar)
             adapter_token = set_current_adapter(adapter) if adapter else None
             try:
+                # Expert context is prepended only here (fed to the agent);
+                # inbound.content stays the user's raw text everywhere else.
+                agent_input = (
+                    f"{inbound.expert_prompt}\n\n---\n\n{inbound.content}"
+                    if inbound.expert_prompt
+                    else inbound.content
+                )
                 reply, used_skills = await self._agent_fn(
-                    inbound.content,
+                    agent_input,
                     history,
                     session.id,
                     key,

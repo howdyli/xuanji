@@ -54,14 +54,18 @@ function App() {
 
   const [activeNav, setActiveNav] = useState('assistant')
   const [search, setSearch] = useState('')
-  const [activeExpert, setActiveExpert] = useState<string | null>(
-    () => localStorage.getItem('active_expert'),
-  )
-  const handleSelectExpert = useCallback((name: string | null) => {
-    setActiveExpert(name)
-    if (name) localStorage.setItem('active_expert', name)
-    else localStorage.removeItem('active_expert')
-  }, [])
+  // 每会话专家：sessionExperts 按会话 id 持久化；pendingExpert 暂存尚未建会话（首页/新任务）时选中的专家。
+  const [sessionExperts, setSessionExperts] = useState<Record<string, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('session_experts') || '{}')
+    } catch {
+      return {}
+    }
+  })
+  const [pendingExpert, setPendingExpert] = useState<string | null>(null)
+  useEffect(() => {
+    localStorage.setItem('session_experts', JSON.stringify(sessionExperts))
+  }, [sessionExperts])
   const [showAppearance, setShowAppearance] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -91,6 +95,28 @@ function App() {
   const activeSessionIdRef = useRef(activeSessionId)
   activeSessionIdRef.current = activeSessionId
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  // 有效专家：有活动会话时取该会话的专家，否则取暂存。refs 供 handleSend 在发送时读取。
+  const effectiveExpert = activeSessionId
+    ? (sessionExperts[activeSessionId] ?? null)
+    : pendingExpert
+  const pendingExpertRef = useRef(pendingExpert)
+  pendingExpertRef.current = pendingExpert
+  const effectiveExpertRef = useRef(effectiveExpert)
+  effectiveExpertRef.current = effectiveExpert
+  const selectExpert = useCallback((name: string | null) => {
+    const sid = activeSessionIdRef.current
+    if (sid) {
+      setSessionExperts((prev) => {
+        const next = { ...prev }
+        if (name) next[sid] = name
+        else delete next[sid]
+        return next
+      })
+    } else {
+      setPendingExpert(name)
+    }
+  }, [])
 
   // Verify token on mount
   useEffect(() => {
@@ -206,6 +232,9 @@ function App() {
   const handleSend = useCallback(
     async (text: string) => {
       if (!authToken) return
+      // 捕获发送时的会话与暂存专家，用于新会话创建后迁移 pendingExpert。
+      const startedSessionId = activeSessionIdRef.current
+      const pendingAtSend = pendingExpertRef.current
       const now = new Date().toISOString()
       setMessages((prev) => [
         ...prev,
@@ -218,7 +247,7 @@ function App() {
         session_id: activeSessionIdRef.current || undefined,
         routing_key: `p2p:web_${currentUser?.username || 'anonymous'}`,
         sender_id: currentUser?.username || 'web_user',
-        expert: activeExpert || undefined,
+        expert: effectiveExpertRef.current || undefined,
       }
 
       // 流式占位气泡：首个 delta 到达时创建，后续逐段追加（打字机）。
@@ -245,6 +274,11 @@ function App() {
         ])
         if (data.session_id) {
           setActiveSessionId(data.session_id)
+          if (!startedSessionId && pendingAtSend) {
+            const newId = data.session_id
+            setSessionExperts((prev) => ({ ...prev, [newId]: pendingAtSend }))
+            setPendingExpert(null)
+          }
           fetchSessions()
         }
       }
@@ -283,6 +317,11 @@ function App() {
             )
             if (data.session_id) {
               setActiveSessionId(data.session_id)
+              if (!startedSessionId && pendingAtSend) {
+                const newId = data.session_id
+                setSessionExperts((prev) => ({ ...prev, [newId]: pendingAtSend }))
+                setPendingExpert(null)
+              }
               fetchSessions()
             }
           },
@@ -310,7 +349,7 @@ function App() {
         setLoading(false)
       }
     },
-    [authToken, fetchSessions, activeExpert]
+    [authToken, fetchSessions, currentUser]
   )
 
   const handleNewTask = useCallback(async () => {
@@ -503,15 +542,15 @@ function App() {
             {authToken && (
               <ExpertManagerView
                 authToken={authToken}
-                activeExpert={activeExpert}
-                onSelectExpert={handleSelectExpert}
+                activeExpert={effectiveExpert}
+                onSelectExpert={(name) => { selectExpert(name); if (name) setActiveNav('assistant') }}
               />
             )}
           </div>
         ) : messages.length === 0 && !historyLoading ? (
           /* ── Unified Workspace: Home state ── */
           <div className="flex-1 flex flex-col min-h-0 view-enter">
-            <DashboardHome onSend={handleSend} loading={loading} username={currentUser.username} sessions={sessions} onSessionSelect={(id) => { handleSelectSession(id); if (window.innerWidth < 1024) setSidebarVisible(false) }} onViewAllSessions={() => setActiveNav('chat')} inputSlot={<UnifiedInputBar isHome={true} loading={loading} onSend={handleSend} sessionId={activeSessionId} inputRef={inputRef} embedded />} />
+            <DashboardHome onSend={handleSend} loading={loading} username={currentUser.username} sessions={sessions} onSessionSelect={(id) => { handleSelectSession(id); if (window.innerWidth < 1024) setSidebarVisible(false) }} onViewAllSessions={() => setActiveNav('chat')} inputSlot={<UnifiedInputBar isHome={true} loading={loading} onSend={handleSend} sessionId={activeSessionId} inputRef={inputRef} embedded activeExpert={effectiveExpert} onSelectExpert={selectExpert} />} />
           </div>
         ) : messages.length === 0 && historyLoading ? (
           <div className="flex-1 flex items-center justify-center view-enter">
@@ -525,7 +564,7 @@ function App() {
           /* ── Unified Workspace: Chat state ── */
           <div className="flex-1 flex flex-col min-h-0 view-enter">
             <ChatMessages messages={messages} loading={loading} sessionTitle={sessions.find(s => s.id === activeSessionId)?.title || ''} onOpenDrawer={() => setDrawerOpen(true)} sessionId={activeSessionId} authToken={authToken!} />
-            <UnifiedInputBar isHome={false} loading={loading} onSend={handleSend} sessionId={activeSessionId} inputRef={inputRef} />
+            <UnifiedInputBar isHome={false} loading={loading} onSend={handleSend} sessionId={activeSessionId} inputRef={inputRef} activeExpert={effectiveExpert} onSelectExpert={selectExpert} />
           </div>
         )}
       </main>
