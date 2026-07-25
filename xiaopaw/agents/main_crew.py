@@ -39,6 +39,7 @@ from xiaopaw.memory.indexer import async_index_turn
 from xiaopaw.models import SenderProtocol
 from xiaopaw.session.models import MessageEntry
 from xiaopaw.tools.intermediate_tool import IntermediateTool
+from xiaopaw.tools.knowledge_search_tool import KnowledgeSearchTool
 
 logger = logging.getLogger(__name__)
 
@@ -224,9 +225,35 @@ class MemoryAwareCrew:
             user_skills_dir=self._user_skills_dir,
         )
 
+        # Knowledge-base retrieval over the caller's personal libraries. Tenant
+        # context is bound here (never from the LLM); a missing DSN yields a
+        # tool that reports "not configured" rather than raising. Session-bound
+        # bases (session_knowledge_bases) restrict retrieval to the bound set;
+        # lookup failures degrade to unrestricted retrieval, never block the turn.
+        allowed_kb_ids: list[str] | None = None
+        if self._db_dsn:
+            try:
+                from xiaopaw.knowledge.store import KnowledgeStore
+
+                bound = KnowledgeStore(self._db_dsn).get_session_bases(self.session_id)
+                allowed_kb_ids = bound or None
+            except Exception as exc:
+                logger.warning("main_crew: get_session_bases failed: %s", exc)
+                allowed_kb_ids = None
+
+        knowledge_tool = KnowledgeSearchTool(
+            routing_key=self.routing_key,
+            db_dsn=self._db_dsn,
+            allowed_kb_ids=allowed_kb_ids,
+        )
+        if allowed_kb_ids:
+            knowledge_tool.description += (
+                f"（当前会话已绑定 {len(allowed_kb_ids)} 个知识库，检索将限定在绑定范围内。）"
+            )
+
         return Agent(
             **cfg,
-            tools=[skill_tool, IntermediateTool()],
+            tools=[skill_tool, IntermediateTool(), knowledge_tool],
             # ✅ P2-1: 使用 ModelRouter 自动选择最优模型（支持多模型路由）
             llm=model_router.get_llm(task_type="orchestrator"),
             verbose=self._verbose,

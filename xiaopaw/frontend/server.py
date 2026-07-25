@@ -125,4 +125,22 @@ def create_frontend_app(
     else:
         logger.warning("frontend: no built assets found (run 'npm run build' in frontend/)")
 
+    # Startup recovery: re-queue knowledge-base documents left pending or stuck
+    # in 'processing' from a previous run (in-process ingestion is not durable).
+    async def _recover_knowledge_ingestion(app: web.Application) -> None:
+        store = app.get("pg_store")
+        if not store or not getattr(store, "_available", False):
+            return
+        try:
+            from xiaopaw.knowledge.ingest import recover_pending
+            from xiaopaw.knowledge.store import KnowledgeStore
+
+            n = await recover_pending(KnowledgeStore(store._dsn))
+            if n:
+                logger.info("knowledge: re-queued %d pending document(s) on startup", n)
+        except Exception as exc:  # pragma: no cover - startup best-effort
+            logger.warning("knowledge: ingestion recovery skipped: %s", exc)
+
+    app.on_startup.append(_recover_knowledge_ingestion)
+
     return app

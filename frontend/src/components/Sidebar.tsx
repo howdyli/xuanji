@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import type { Session } from '../types'
 import { formatRelativeTime } from '../utils/format'
-import { AutomationIcon, ModelConfigIcon, LibraryIcon, SettingsIcon } from './icons'
+import { AutomationIcon, ModelConfigIcon, LibraryIcon, KnowledgeIcon, SettingsIcon } from './icons'
 import { NAV_ITEMS, NAV_WORKFLOW, NAV_TOOLS } from './navConfig'
 
 // --- Export Menu Component ---
@@ -463,6 +463,7 @@ useEffect(() => {
             {[
               { id: 'automation', label: '转化', icon: <AutomationIcon /> },
               { id: 'model-config', label: '模型配置', icon: <ModelConfigIcon /> },
+              { id: 'knowledge', label: '知识库', icon: <KnowledgeIcon /> },
               { id: 'library', label: '资料库', icon: <LibraryIcon /> },
             ].map(item => (
               <button

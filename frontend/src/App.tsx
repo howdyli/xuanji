@@ -21,6 +21,7 @@ import { LoginView } from './components/LoginView'
 import { AutomationManagerView } from './components/AutomationManagerView'
 import { ThemeProvider } from './components/ThemeContext'
 import { LibraryView } from './components/LibraryView'
+import { KnowledgeView } from './components/KnowledgeView'
 import { AppearanceSettings } from './components/AppearanceSettings'
 import { ProfileSettings } from './components/ProfileSettings'
 import { ModelConfigView } from './components/ModelConfigView'
@@ -532,6 +533,10 @@ function App() {
         ) : activeNav === 'library' ? (
           <div className="flex-1 flex flex-col min-h-0 view-enter">
             <LibraryView authToken={authToken} />
+          </div>
+        ) : activeNav === 'knowledge' ? (
+          <div className="flex-1 flex flex-col min-h-0 view-enter">
+            <KnowledgeView authToken={authToken} isAdmin={!!currentUser.is_admin} />
           </div>
         ) : activeNav === 'team' ? (
           <div className="flex-1 flex flex-col min-h-0 view-enter">

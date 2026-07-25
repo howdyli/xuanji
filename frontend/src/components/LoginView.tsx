@@ -1,6 +1,7 @@
 /**
- * LoginView — 玄机 AI 登录界面 (v2.1 — optimized)
- * 左侧品牌区(1.15) + 右侧登录区(0.85) · 2×2 特性网格 · Tab 切换
+ * LoginView — 玄机 AI 登录界面 (v2.2 — 天蓝色设计稿版)
+ * 左侧深海军蓝品牌区 + 右侧留白表单区
+ * 设计稿：左侧折线图插画 + 品牌标语，右侧社交登录 + 账号表单
  */
 
 import { useState, type FormEvent } from 'react'
@@ -20,42 +21,40 @@ type Theme = {
 
 /* ─── Design Tokens ─────────────────────────────────────── */
 const C = {
-  navy950: '#0a1628',
-  navy900: '#0f1f3d',
-  navy800: '#152a4e',
-  blue400: '#4F6EF7',
-  blue600: '#3D5CE5',
-  blue700: '#2D4BD3',
-  green400: '#639922',
+  navyTop: '#0c2340',   // 深海军蓝 — 顶
+  navyBot: '#123057',   // 深海军蓝 — 底
+  sky: '#3898EC',       // 天蓝强调色（与侧边栏统一）
+  skyHover: '#2B7CD4',
   white: '#ffffff',
-  gray50: '#F8F9FA',
-  gray100: '#F1F3F5',
-  gray200: '#E9ECEF',
-  gray300: '#DEE2E6',
-  gray400: '#CED4DA',
-  gray500: '#ADB5BD',
-  gray600: '#868E96',
-  gray700: '#495057',
-  gray800: '#343A40',
-  gray900: '#212529',
-  radiusSm: 6,
+  gray50: '#f7f8fa',
+  gray100: '#f1f3f5',
+  gray200: '#e6e8eb',
+  gray300: '#d5d9de',
+  gray400: '#b6bcc4',
+  gray500: '#8a929c',
+  gray600: '#6b7280',
+  gray700: '#4b5563',
+  gray800: '#374151',
+  gray900: '#1f2430',
   radiusMd: 10,
-  radiusLg: 16,
+  radiusLg: 14,
 } as const
 
 export function LoginView({ theme = {}, onLogin }: {
   theme?: Theme
   onLogin: (token: string, user: LoginUser) => void
 }) {
+  const sky = theme.primaryColor || C.sky
+  const skyHover = theme.primaryHover || C.skyHover
+
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [remember, setRemember] = useState(false)
+  const [remember, setRemember] = useState(true)
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
   const [globalError, setGlobalError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<{ username?: string; password?: string }>({})
   const [toast, setToast] = useState('')
-  const [activeTab, setActiveTab] = useState<'wechat' | 'feishu'>('wechat')
 
   const API_BASE = '/api/frontend'
 
@@ -67,7 +66,7 @@ export function LoginView({ theme = {}, onLogin }: {
 
   function validate(): boolean {
     const errs: { username?: string; password?: string } = {}
-    if (!username.trim()) errs.username = '请输入用户名或邮箱'
+    if (!username.trim()) errs.username = '请输入邮箱或账号'
     if (!password) errs.password = '请输入密码'
     setFieldErrors(errs)
     return Object.keys(errs).length === 0
@@ -93,7 +92,7 @@ export function LoginView({ theme = {}, onLogin }: {
       })
       if (!res.ok) {
         const data = await res.json().catch(() => null)
-        setGlobalError(data?.detail || '用户名或密码不正确，请重试。')
+        setGlobalError(data?.detail || '邮箱或密码不正确，请重试。')
         return
       }
       const data = await res.json()
@@ -107,237 +106,213 @@ export function LoginView({ theme = {}, onLogin }: {
 
   /* ── Input style helper ──────────────────────────────── */
   const inputBase: React.CSSProperties = {
-    width: '100%', padding: '12px 14px 12px 42px',
-    fontSize: 14, border: `1.5px solid ${C.gray200}`,
+    width: '100%', padding: '13px 16px',
+    fontSize: 14.5, border: `1.5px solid ${C.gray200}`,
     borderRadius: C.radiusMd, background: C.gray50,
     color: C.gray900, outline: 'none', fontFamily: 'inherit',
     transition: 'all 0.2s ease', WebkitAppearance: 'none' as never,
+    boxSizing: 'border-box',
+  }
+
+  function focusInput(el: HTMLInputElement, err?: string) {
+    if (err) return
+    el.style.borderColor = sky
+    el.style.background = C.white
+    el.style.boxShadow = `0 0 0 3px rgba(56,152,236,0.12)`
+  }
+  function blurInput(el: HTMLInputElement, err?: string) {
+    if (err) return
+    el.style.borderColor = C.gray200
+    el.style.background = C.gray50
+    el.style.boxShadow = 'none'
   }
 
   /* ── Render ──────────────────────────────────────────── */
   return (
-    <div style={{
+    <div className="lv-root" style={{
       display: 'flex', minHeight: '100vh',
       fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', 'PingFang SC', sans-serif",
     }}>
 
       {/* ═══ Left Panel (Brand) ═══ */}
-      <aside style={{
-        flex: 1.15, position: 'relative', overflow: 'hidden',
-        background: `linear-gradient(165deg, ${C.navy950} 0%, ${C.navy900} 45%, ${C.navy800} 100%)`,
-        padding: '48px 56px', display: 'flex', flexDirection: 'column',
+      <aside className="lv-brand" style={{
+        flex: '1.08 1 54%', position: 'relative', overflow: 'hidden',
+        background: `linear-gradient(165deg, ${C.navyTop} 0%, ${C.navyBot} 100%)`,
+        padding: '52px 56px', display: 'flex', flexDirection: 'column',
       }}>
-        {/* Decorative circles */}
+        {/* Ambient glows — 增加纵深质感 */}
         <div aria-hidden style={{
-          position: 'absolute', top: -120, right: -80,
-          width: 420, height: 420, borderRadius: '50%',
-          background: `radial-gradient(circle, rgba(79,110,247,0.08) 0%, transparent 70%)`,
-          pointerEvents: 'none',
+          position: 'absolute', top: -160, right: -120, width: 480, height: 480,
+          borderRadius: '50%', pointerEvents: 'none',
+          background: 'radial-gradient(circle, rgba(56,152,236,0.16) 0%, transparent 70%)',
         }} />
         <div aria-hidden style={{
-          position: 'absolute', bottom: -60, left: -40,
-          width: 300, height: 300, borderRadius: '50%',
-          background: `radial-gradient(circle, rgba(99,153,34,0.06) 0%, transparent 70%)`,
-          pointerEvents: 'none',
+          position: 'absolute', bottom: -120, left: -80, width: 360, height: 360,
+          borderRadius: '50%', pointerEvents: 'none',
+          background: 'radial-gradient(circle, rgba(56,152,236,0.08) 0%, transparent 70%)',
         }} />
-
-        {/* Content wrapper */}
-        <div style={{ position: 'relative', zIndex: 1, flex: 1, display: 'flex', flexDirection: 'column' }}>
-
-          {/* Logo */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{
-              width: 40, height: 40, borderRadius: C.radiusMd,
-              background: 'linear-gradient(135deg, #E0F5F0, #D0EFE8)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 4px 16px rgba(38,198,218,0.3)',
-            }}>
-              <svg viewBox="0 0 24 24" style={{ width: 24, height: 24 }} fill="none">
-                <path d="M12 2.5L4.5 6v5.5c0 4.5 3.2 8.2 7.5 9.5 4.3-1.3 7.5-5 7.5-9.5V6L12 2.5z" fill="#0D2E5A" stroke="#26C6DA" strokeWidth="0.8" strokeLinejoin="round"/>
-                <rect x="8.2" y="8.5" width="7.6" height="6" rx="1.8" fill="#E8EFF5"/>
-                <line x1="12" y1="6.8" x2="12" y2="8.5" stroke="#E8EFF5" strokeWidth="1" strokeLinecap="round"/>
-                <circle cx="12" cy="6.3" r="0.9" fill="#26C6DA"/>
-                <circle cx="10.3" cy="11.2" r="1.1" fill="#26C6DA"/>
-                <circle cx="13.7" cy="11.2" r="1.1" fill="#26C6DA"/>
-                <line x1="10.5" y1="13.2" x2="13.5" y2="13.2" stroke="#90A4AE" strokeWidth="0.7" strokeLinecap="round"/>
-                <text x="5" y="19" fontSize="4.5" fill="#26C6DA" fontFamily="monospace" fontWeight="bold">&lt;/&gt;</text>
-              </svg>
-            </div>
-            <div>
-              <h1 style={{ fontSize: 18, fontWeight: 600, color: 'white', letterSpacing: 1, lineHeight: 1, margin: 0 }}>玄机</h1>
-              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', letterSpacing: 2, textTransform: 'uppercase' }}>XUANJI · AI Platform</span>
-            </div>
-          </div>
-
-          {/* Badge */}
+        {/* Logo */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, position: 'relative', zIndex: 1 }}>
           <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            marginTop: 28, padding: '6px 14px', width: 'fit-content',
-            background: 'rgba(79,110,247,0.12)', border: '1px solid rgba(79,110,247,0.2)',
-            borderRadius: 100,
+            width: 42, height: 42, display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <span style={{
-              width: 6, height: 6, borderRadius: '50%',
-              background: C.green400, animation: 'lv-pulse 2s ease-in-out infinite',
-            }} />
-            <span style={{ fontSize: 12, color: C.blue400 }}>智能多体协作平台 · 2026</span>
+            <svg viewBox="0 0 40 40" style={{ width: 42, height: 42 }} fill="none">
+              {/* hexagon */}
+              <path d="M20 3L33.86 11v16L20 35 6.14 27V11L20 3z"
+                fill="rgba(56,152,236,0.12)" stroke={sky} strokeWidth="2" strokeLinejoin="round" />
+              {/* inner ring + dot */}
+              <circle cx="20" cy="19" r="5.5" fill="none" stroke={sky} strokeWidth="2" />
+              <circle cx="20" cy="19" r="2" fill={sky} />
+            </svg>
           </div>
+          <span style={{ fontSize: 22, fontWeight: 700, color: 'white', letterSpacing: 1 }}>玄机</span>
+        </div>
 
-          {/* Hero */}
-          <div style={{ marginTop: 36 }}>
-            <h2 style={{
-              fontSize: 36, fontWeight: 700, color: 'white',
-              lineHeight: 1.25, letterSpacing: -0.5, margin: 0,
-            }}>
-              靠谱的<br />
-              <span style={{
-                background: `linear-gradient(135deg, ${C.blue400}, #7C5CFC)`,
-                WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
-                backgroundClip: 'text',
-              }}>工作伙伴</span>
-            </h2>
-            <p style={{
-              marginTop: 18, fontSize: 14.5, color: 'rgba(255,255,255,0.55)',
-              lineHeight: 1.75, maxWidth: 380,
-            }}>
-              AI 驱动团队协作，让每项任务一一被响应。<br />
-              支持自动执行、代码与知识库托管。
-            </p>
-          </div>
-
-          {/* Features 2×2 grid */}
+        {/* Hero */}
+        <div style={{ position: 'relative', zIndex: 1, marginTop: 'auto', marginBottom: 'auto', paddingTop: 28 }}>
           <div style={{
-            marginTop: 44, display: 'grid',
-            gridTemplateColumns: '1fr 1fr', gap: 12,
+            fontSize: 13, fontWeight: 600, letterSpacing: 4,
+            textTransform: 'uppercase', color: 'rgba(255,255,255,0.42)', marginBottom: 22,
+          }}>Ai platform</div>
+
+          <h2 style={{
+            fontSize: 44, fontWeight: 800, color: 'white',
+            lineHeight: 1.2, letterSpacing: 0.5, margin: 0,
           }}>
-            {[
-              {
-                name: '多智能体协作', desc: '多 Agent 并行处理，复杂任务一键分发',
-                iconBg: 'rgba(79,110,247,0.15)', iconColor: C.blue400,
-                icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4m0 14v4M4.22 4.22l2.83 2.83m9.9 9.9l2.83 2.83M1 12h4m14 0h4M4.22 19.78l2.83-2.83m9.9-9.9l2.83-2.83"/></svg>,
-              },
-              {
-                name: '7×24 响应', desc: '全天候在线，无人值守不间断工作',
-                iconBg: 'rgba(99,153,34,0.15)', iconColor: C.green400,
-                icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10m-10 4h6m-6 4h4"/></svg>,
-              },
-              {
-                name: '安全沙箱隔离', desc: '企业级隔离，数据安全无泄漏',
-                iconBg: 'rgba(240,153,123,0.15)', iconColor: '#D85A30',
-                icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
-              },
-              {
-                name: '知识库记忆', desc: '上下文持久化，越用越懂你',
-                iconBg: 'rgba(167,169,236,0.15)', iconColor: '#7F77DD',
-                icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M8 7h8m-8 4h5"/></svg>,
-              },
-            ].map((f) => (
-              <div key={f.name} style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.07)',
-                borderRadius: C.radiusMd, padding: '18px 20px',
-                transition: 'all 0.25s ease', cursor: 'default',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.08)'
-                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.13)'
-                e.currentTarget.style.transform = 'translateY(-2px)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
-                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'
-                e.currentTarget.style.transform = 'translateY(0)'
-              }}
-              >
-                <div style={{
-                  width: 34, height: 34, borderRadius: 8,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  marginBottom: 10, background: f.iconBg, color: f.iconColor,
+            让每一次推理<br />
+            都有迹可循
+          </h2>
+
+          <p style={{
+            marginTop: 20, fontSize: 15, color: 'rgba(255,255,255,0.55)',
+            lineHeight: 1.75, maxWidth: 480,
+          }}>
+            从数据到决策，玄机为你拆解每一步逻辑链路——透明、可追溯、可复现。
+          </p>
+
+          {/* Data visualization card — 图表 + 关键指标重排 */}
+          <div className="lv-viz" style={{
+            marginTop: 34, padding: '24px 28px 20px', maxWidth: 620, width: '100%',
+            background: 'rgba(255,255,255,0.05)',
+            border: '1px solid rgba(255,255,255,0.09)',
+            borderRadius: 16, backdropFilter: 'blur(4px)',
+          }}>
+            {/* legend */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: sky }} />
+                <span style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.72)' }}>推理准确率 · 近 7 日</span>
+              </div>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: sky }}>↑ 98.6%</span>
+            </div>
+
+            {/* chart */}
+            <svg viewBox="0 0 440 170" style={{ width: '100%', display: 'block' }} fill="none">
+              <defs>
+                <linearGradient id="lv-area" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={sky} stopOpacity="0.26" />
+                  <stop offset="100%" stopColor={sky} stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              {/* baseline grid */}
+              <g stroke="rgba(255,255,255,0.08)" strokeWidth="1">
+                <line x1="0" y1="42" x2="440" y2="42" />
+                <line x1="0" y1="84" x2="440" y2="84" />
+                <line x1="0" y1="126" x2="440" y2="126" />
+              </g>
+              {/* area */}
+              <polygon className="lv-chart-area" points="20,120 160,86 300,96 420,40 420,150 20,150" fill="url(#lv-area)" />
+              {/* line */}
+              <polyline className="lv-chart-line" points="20,120 160,86 300,96 420,40"
+                stroke={sky} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              {/* nodes */}
+              {[[20, 120], [160, 86], [300, 96], [420, 40]].map(([x, y], i) => (
+                <circle key={i} className="lv-chart-node" style={{ animationDelay: `${0.6 + i * 0.15}s` }}
+                  cx={x} cy={y} r="4.5" fill={C.navyBot} stroke={sky} strokeWidth="2.5" />
+              ))}
+            </svg>
+
+            {/* x-axis labels */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, padding: '0 2px', fontSize: 11, color: 'rgba(255,255,255,0.34)' }}>
+              <span>第 1 步</span><span>第 3 步</span><span>第 5 步</span><span>第 7 步</span>
+            </div>
+
+            {/* key metrics */}
+            <div style={{ display: 'flex', marginTop: 18, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+              {[
+                { v: '12k+', label: '服务团队' },
+                { v: '3.2k', label: '今日推理' },
+                { v: '500ms', label: '平均响应' },
+              ].map((m, i) => (
+                <div key={m.label} style={{
+                  flex: 1, textAlign: i === 0 ? 'left' : 'center',
+                  borderLeft: i === 0 ? 'none' : '1px solid rgba(255,255,255,0.08)',
                 }}>
-                  <span style={{ width: 17, height: 17, display: 'block' }}>{f.icon}</span>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: 'white', letterSpacing: -0.3 }}>{m.v}</div>
+                  <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.4)', marginTop: 3 }}>{m.label}</div>
                 </div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,0.88)', marginBottom: 3 }}>{f.name}</div>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.38)', lineHeight: 1.5 }}>{f.desc}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Stats bar */}
-          <div style={{
-            marginTop: 'auto', paddingTop: 32,
-            display: 'flex', gap: 32, alignItems: 'flex-start',
-          }}>
-            <div>
-              <div style={{ fontSize: 26, fontWeight: 700, color: 'white', letterSpacing: -0.5 }}>
-                12k<span style={{ fontSize: 16, color: C.blue400 }}>+</span>
-              </div>
-              <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.35)', marginTop: 2 }}>活跃用户</div>
-            </div>
-            <div style={{ width: 1, alignSelf: 'stretch', background: 'rgba(255,255,255,0.1)' }} />
-            <div>
-              <div style={{ fontSize: 26, fontWeight: 700, color: 'white', letterSpacing: -0.5 }}>
-                98.6<span style={{ fontSize: 16, color: C.green400 }}>%</span>
-              </div>
-              <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.35)', marginTop: 2 }}>服务可用率</div>
-            </div>
-            <div style={{ width: 1, alignSelf: 'stretch', background: 'rgba(255,255,255,0.1)' }} />
-            <div>
-              <div style={{ fontSize: 26, fontWeight: 700, color: 'white', letterSpacing: -0.5 }}>
-                500<span style={{ fontSize: 16, fontWeight: 500, color: 'rgba(255,255,255,0.5)' }}>ms</span>
-              </div>
-              <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.35)', marginTop: 2 }}>平均响应</div>
+              ))}
             </div>
           </div>
+        </div>
 
+        {/* Footer line */}
+        <div style={{
+          position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', gap: 14,
+          fontSize: 13, color: 'rgba(255,255,255,0.5)',
+        }}>
+          <span style={{ width: 28, height: 1.5, background: 'rgba(255,255,255,0.3)' }} />
+          © 2026 玄机 XUANJI · v2.0
         </div>
       </aside>
 
       {/* ═══ Right Panel (Login Form) ═══ */}
-      <main style={{
-        flex: 0.85, background: C.white,
+      <main className="lv-form" style={{
+        flex: '0.92 1 46%', background: C.white,
         display: 'flex', flexDirection: 'column', justifyContent: 'center',
-        padding: '48px 64px', position: 'relative',
+        padding: '48px 72px',
       }}>
-        <div style={{ maxWidth: 400, width: '100%', margin: '0 auto' }}>
+        <div className="lv-enter" style={{ maxWidth: 400, width: '100%', margin: '0 auto' }}>
 
           {/* Header */}
-          <header style={{ marginBottom: 36 }}>
+          <header style={{ marginBottom: 28 }}>
             <h2 style={{
-              fontSize: 26, fontWeight: 700, color: C.gray900,
-              letterSpacing: -0.3, marginBottom: 8,
+              fontSize: 30, fontWeight: 700, color: C.gray900,
+              letterSpacing: -0.3, marginBottom: 10,
             }}>欢迎回来</h2>
-            <p style={{ fontSize: 14, color: C.gray500 }}>登录你的玄机账户以继续使用</p>
+            <p style={{ fontSize: 14.5, color: C.gray500 }}>登录你的玄机账户，继续探索</p>
           </header>
 
-          {/* Auth tabs */}
-          <div style={{
-            display: 'flex', background: C.gray100,
-            borderRadius: C.radiusMd, padding: 3, marginBottom: 28,
-          }}>
-            {([
-              { key: 'wechat' as const, label: '企业微信', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12c0 4.42 2.87 8.17 6.84 9.5.5.09.66-.22.66-.48v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.56 9.56 0 0 1 2.5-.34c.85 0 1.7.12 2.5.34 1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.16.58.67.48A10.01 10.01 0 0 0 22 12c0-5.52-4.48-10-10-10z"/></svg> },
-              { key: 'feishu' as const, label: '飞书', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg> },
-            ]).map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => setActiveTab(tab.key)}
-                style={{
-                  flex: 1, padding: '10px 0', textAlign: 'center',
-                  fontSize: 13.5, fontWeight: 500,
-                  color: activeTab === tab.key ? C.gray900 : C.gray500,
-                  border: 'none', cursor: 'pointer',
-                  background: activeTab === tab.key ? C.white : 'transparent',
-                  borderRadius: 7,
-                  boxShadow: activeTab === tab.key ? '0 1px 2px rgba(0,0,0,0.04)' : 'none',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                  transition: 'all 0.2s ease', fontFamily: 'inherit',
-                }}
-              >
-                {tab.icon}
-                {tab.label}
-              </button>
-            ))}
+          {/* Social buttons */}
+          <div style={{ display: 'flex', gap: 14, marginBottom: 22 }}>
+            <button type="button" onClick={() => showToast('微信登录即将上线')}
+              style={socialBtnStyle}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.gray300; e.currentTarget.style.background = C.gray50 }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.gray200; e.currentTarget.style.background = C.white }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="#09BB07">
+                <path d="M8.69 2C4.6 2 1.28 4.74 1.28 8.12c0 1.95 1.1 3.68 2.83 4.82l-.71 2.13 2.48-1.24c.88.24 1.82.37 2.81.37.24 0 .48-.01.71-.03a4.9 4.9 0 0 1-.2-1.38c0-2.98 2.9-5.4 6.48-5.4.24 0 .47.02.7.05C15.83 3.65 12.6 2 8.69 2zM6.2 6.9a.93.93 0 1 1 0-1.86.93.93 0 0 1 0 1.86zm5 0a.93.93 0 1 1 0-1.86.93.93 0 0 1 0 1.86z"/>
+                <path d="M22.72 13.4c0-2.85-2.85-5.17-6.36-5.17s-6.36 2.32-6.36 5.17 2.85 5.17 6.36 5.17c.73 0 1.43-.1 2.08-.28l1.9.95-.52-1.58c1.72-.95 2.9-2.5 2.9-4.26zm-8.43-.8a.77.77 0 1 1 0-1.54.77.77 0 0 1 0 1.54zm4.14 0a.77.77 0 1 1 0-1.54.77.77 0 0 1 0 1.54z"/>
+              </svg>
+              <span>微信</span>
+            </button>
+            <button type="button" onClick={() => showToast('GitHub 登录即将上线')}
+              style={socialBtnStyle}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.gray300; e.currentTarget.style.background = C.gray50 }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.gray200; e.currentTarget.style.background = C.white }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="#1f2430">
+                <path d="M12 2C6.48 2 2 6.48 2 12c0 4.42 2.87 8.17 6.84 9.5.5.09.66-.22.66-.48v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.56 9.56 0 0 1 2.5-.34c.85 0 1.7.12 2.5.34 1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.16.58.67.48A10.01 10.01 0 0 0 22 12c0-5.52-4.48-10-10-10z"/>
+              </svg>
+              <span>GitHub</span>
+            </button>
+          </div>
+
+          {/* Divider */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 22 }}>
+            <span style={{ flex: 1, height: 1, background: C.gray200 }} />
+            <span style={{ fontSize: 12.5, color: C.gray500, whiteSpace: 'nowrap' }}>或使用账号登录</span>
+            <span style={{ flex: 1, height: 1, background: C.gray200 }} />
           </div>
 
           {/* Global error */}
@@ -357,66 +332,30 @@ export function LoginView({ theme = {}, onLogin }: {
 
           {/* Login form */}
           <form onSubmit={handleSubmit} noValidate>
-            {/* Username */}
+            {/* Email */}
             <div style={{ marginBottom: 20 }}>
-              <label htmlFor="login-username" style={{
-                display: 'block', fontSize: 13, fontWeight: 500,
-                color: C.gray700, marginBottom: 7,
-              }}>用户名 / 邮箱</label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  id="login-username"
-                  type="text"
-                  value={username}
-                  onChange={(e) => { setUsername(e.target.value); if (fieldErrors.username) setFieldErrors(f => ({ ...f, username: undefined })) }}
-                  placeholder="请输入账号或邮箱地址"
-                  autoComplete="username"
-                  style={{
-                    ...inputBase,
-                    borderColor: fieldErrors.username ? '#dc2626' : C.gray200,
-                    boxShadow: fieldErrors.username ? '0 0 0 3px rgba(220,38,38,0.10)' : undefined,
-                  }}
-                  onFocus={(e) => {
-                    if (!fieldErrors.username) {
-                      e.target.style.borderColor = C.blue400
-                      e.target.style.background = C.white
-                      e.target.style.boxShadow = `0 0 0 3px rgba(79,110,247,0.10)`
-                    }
-                  }}
-                  onBlur={(e) => {
-                    if (!fieldErrors.username) {
-                      e.target.style.borderColor = C.gray200
-                      e.target.style.background = C.gray50
-                      e.target.style.boxShadow = 'none'
-                    }
-                  }}
-                />
-                <span style={{
-                  position: 'absolute', left: 14, top: '50%',
-                  transform: 'translateY(-50%)', color: C.gray400,
-                  display: 'flex', alignItems: 'center', pointerEvents: 'none',
-                }}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ width: 17, height: 17 }}>
-                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
-                  </svg>
-                </span>
-              </div>
-              {fieldErrors.username && (
-                <p role="alert" style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#dc2626', marginTop: 4 }}>
-                  <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" style={{ width: 12, height: 12 }}>
-                    <circle cx="6" cy="6" r="5" /><path d="M6 4v2.5M6 8v.5" />
-                  </svg>
-                  {fieldErrors.username}
-                </p>
-              )}
+              <label htmlFor="login-username" style={labelStyle}>邮箱</label>
+              <input
+                id="login-username"
+                type="text"
+                value={username}
+                onChange={(e) => { setUsername(e.target.value); if (fieldErrors.username) setFieldErrors(f => ({ ...f, username: undefined })) }}
+                placeholder="name@xuanji.ai"
+                autoComplete="username"
+                style={{
+                  ...inputBase,
+                  borderColor: fieldErrors.username ? '#dc2626' : C.gray200,
+                  boxShadow: fieldErrors.username ? '0 0 0 3px rgba(220,38,38,0.10)' : undefined,
+                }}
+                onFocus={(e) => focusInput(e.target, fieldErrors.username)}
+                onBlur={(e) => blurInput(e.target, fieldErrors.username)}
+              />
+              {fieldErrors.username && <FieldError msg={fieldErrors.username} />}
             </div>
 
             {/* Password */}
-            <div style={{ marginBottom: 20 }}>
-              <label htmlFor="login-password" style={{
-                display: 'block', fontSize: 13, fontWeight: 500,
-                color: C.gray700, marginBottom: 7,
-              }}>密码</label>
+            <div style={{ marginBottom: 18 }}>
+              <label htmlFor="login-password" style={labelStyle}>密码</label>
               <div style={{ position: 'relative' }}>
                 <input
                   id="login-password"
@@ -427,65 +366,25 @@ export function LoginView({ theme = {}, onLogin }: {
                   autoComplete="current-password"
                   style={{
                     ...inputBase,
-                    paddingRight: 44,
+                    paddingRight: 56,
                     borderColor: fieldErrors.password ? '#dc2626' : C.gray200,
                     boxShadow: fieldErrors.password ? '0 0 0 3px rgba(220,38,38,0.10)' : undefined,
                   }}
-                  onFocus={(e) => {
-                    if (!fieldErrors.password) {
-                      e.target.style.borderColor = C.blue400
-                      e.target.style.background = C.white
-                      e.target.style.boxShadow = `0 0 0 3px rgba(79,110,247,0.10)`
-                    }
-                  }}
-                  onBlur={(e) => {
-                    if (!fieldErrors.password) {
-                      e.target.style.borderColor = C.gray200
-                      e.target.style.background = C.gray50
-                      e.target.style.boxShadow = 'none'
-                    }
-                  }}
+                  onFocus={(e) => focusInput(e.target, fieldErrors.password)}
+                  onBlur={(e) => blurInput(e.target, fieldErrors.password)}
                 />
-                <span style={{
-                  position: 'absolute', left: 14, top: '50%',
-                  transform: 'translateY(-50%)', color: C.gray400,
-                  display: 'flex', alignItems: 'center', pointerEvents: 'none',
-                }}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ width: 17, height: 17 }}>
-                    <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                  </svg>
-                </span>
                 <button
                   type="button"
                   onClick={() => setShowPw(!showPw)}
-                  aria-label={showPw ? '隐藏密码' : '显示密码'}
                   style={{
                     position: 'absolute', right: 14, top: '50%',
                     transform: 'translateY(-50%)',
                     background: 'none', border: 'none', cursor: 'pointer',
-                    color: C.gray400, padding: 4, display: 'flex', alignItems: 'center',
-                    transition: 'color 0.2s',
+                    color: C.gray500, fontSize: 13, fontFamily: 'inherit', padding: 0,
                   }}
-                >
-                  {showPw ? (
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ width: 17, height: 17 }}>
-                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>
-                    </svg>
-                  ) : (
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ width: 17, height: 17 }}>
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
-                    </svg>
-                  )}
-                </button>
+                >{showPw ? '隐藏' : '显示'}</button>
               </div>
-              {fieldErrors.password && (
-                <p role="alert" style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#dc2626', marginTop: 4 }}>
-                  <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" style={{ width: 12, height: 12 }}>
-                    <circle cx="6" cy="6" r="5" /><path d="M6 4v2.5M6 8v.5" />
-                  </svg>
-                  {fieldErrors.password}
-                </p>
-              )}
+              {fieldErrors.password && <FieldError msg={fieldErrors.password} />}
             </div>
 
             {/* Remember me + Forgot */}
@@ -493,34 +392,34 @@ export function LoginView({ theme = {}, onLogin }: {
               display: 'flex', alignItems: 'center',
               justifyContent: 'space-between', marginBottom: 26,
             }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', position: 'relative' }}>
                 <input
                   type="checkbox"
                   checked={remember}
                   onChange={(e) => setRemember(e.target.checked)}
                   style={{
-                    appearance: 'none', width: 16, height: 16,
-                    border: `1.5px solid ${remember ? C.blue600 : C.gray300}`,
-                    borderRadius: 4, cursor: 'pointer',
-                    background: remember ? C.blue600 : 'white',
-                    position: 'relative', transition: 'all 0.15s',
+                    appearance: 'none', width: 18, height: 18,
+                    border: `1.5px solid ${remember ? sky : C.gray300}`,
+                    borderRadius: 5, cursor: 'pointer',
+                    background: remember ? sky : 'white',
+                    transition: 'all 0.15s', flexShrink: 0,
                   }}
                 />
                 {remember && (
                   <svg viewBox="0 0 10 10" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                    style={{ position: 'absolute', width: 8, height: 8, pointerEvents: 'none', marginLeft: -21, marginTop: -1 }}>
-                    <path d="M1.5 5l2.5 2.5L8.5 2" />
+                    style={{ position: 'absolute', width: 9, height: 9, left: 4.5, pointerEvents: 'none' }}>
+                    <path d="M1 5l2.5 2.5L9 1.5" />
                   </svg>
                 )}
-                <span style={{ fontSize: 13, color: C.gray600, cursor: 'pointer' }}>记住我</span>
+                <span style={{ fontSize: 13.5, color: C.gray700 }}>记住我</span>
               </label>
               <button
                 type="button"
                 onClick={() => showToast('密码找回功能即将上线')}
                 style={{
-                  fontSize: 13, color: C.blue600, fontWeight: 500,
-                  textDecoration: 'none', background: 'none', border: 'none',
-                  cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 13.5, color: sky, fontWeight: 500,
+                  background: 'none', border: 'none',
+                  cursor: 'pointer', fontFamily: 'inherit', padding: 0,
                 }}
               >忘记密码?</button>
             </div>
@@ -530,81 +429,45 @@ export function LoginView({ theme = {}, onLogin }: {
               type="submit"
               disabled={loading}
               style={{
-                width: '100%', padding: 13,
-                fontSize: 15, fontWeight: 600, color: 'white',
-                background: loading ? C.blue600 : `linear-gradient(135deg, ${C.blue600}, ${C.blue700})`,
+                width: '100%', padding: 14,
+                fontSize: 15.5, fontWeight: 600, color: 'white',
+                background: sky,
                 border: 'none', borderRadius: C.radiusMd, cursor: loading ? 'not-allowed' : 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                letterSpacing: 0.3, fontFamily: 'inherit',
-                opacity: loading ? 0.7 : 1,
-                transition: 'all 0.25s ease',
+                fontFamily: 'inherit', opacity: loading ? 0.75 : 1,
+                boxShadow: loading ? 'none' : '0 4px 14px rgba(56,152,236,0.28)',
+                transition: 'all 0.2s ease',
               }}
-              onMouseEnter={(e) => {
-                if (!loading) {
-                  e.currentTarget.style.background = `linear-gradient(135deg, ${C.blue400}, ${C.blue600})`
-                  e.currentTarget.style.boxShadow = `0 6px 20px rgba(61,92,229,0.35)`
-                  e.currentTarget.style.transform = 'translateY(-1px)'
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!loading) {
-                  e.currentTarget.style.background = `linear-gradient(135deg, ${C.blue600}, ${C.blue700})`
-                  e.currentTarget.style.boxShadow = 'none'
-                  e.currentTarget.style.transform = 'translateY(0)'
-                }
-              }}
-              onMouseDown={(e) => {
-                if (!loading) e.currentTarget.style.transform = 'translateY(0)'
-              }}
-              onMouseUp={(e) => {
-                if (!loading) e.currentTarget.style.transform = 'translateY(-1px)'
-              }}
+              onMouseEnter={(e) => { if (!loading) { e.currentTarget.style.background = skyHover; e.currentTarget.style.boxShadow = '0 8px 22px rgba(56,152,236,0.38)'; e.currentTarget.style.transform = 'translateY(-1px)' } }}
+              onMouseLeave={(e) => { if (!loading) { e.currentTarget.style.background = sky; e.currentTarget.style.boxShadow = '0 4px 14px rgba(56,152,236,0.28)'; e.currentTarget.style.transform = 'translateY(0)' } }}
+              onMouseDown={(e) => { if (!loading) e.currentTarget.style.transform = 'translateY(0)' }}
+              onMouseUp={(e) => { if (!loading) e.currentTarget.style.transform = 'translateY(-1px)' }}
             >
               {loading ? (
                 <span style={{
                   display: 'block', width: 18, height: 18,
-                  border: '2px solid rgba(255,255,255,0.3)',
+                  border: '2px solid rgba(255,255,255,0.35)',
                   borderTopColor: 'white', borderRadius: '50%',
                   animation: 'lv-spin 0.6s linear infinite',
                 }} />
-              ) : (
-                <>
-                  登录账户
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ width: 16, height: 16 }}>
-                    <path d="M5 12h14m-7-7l7 7-7 7" />
-                  </svg>
-                </>
-              )}
+              ) : '登录'}
             </button>
           </form>
 
           {/* Register link */}
-          <p style={{ textAlign: 'center', marginTop: 24, fontSize: 13.5, color: C.gray500 }}>
-            还没有账号？
+          <p style={{ textAlign: 'center', marginTop: 24, fontSize: 14, color: C.gray500 }}>
+            还没有账户？
             <button
               type="button"
               onClick={() => showToast('注册功能即将上线')}
               style={{
-                color: C.blue600, fontWeight: 600, marginLeft: 4,
+                color: sky, fontWeight: 600, marginLeft: 4,
                 background: 'none', border: 'none', cursor: 'pointer',
-                fontFamily: 'inherit', fontSize: 13.5, padding: 0,
+                fontFamily: 'inherit', fontSize: 14, padding: 0,
               }}
-            >立即注册 &rarr;</button>
+            >立即注册</button>
           </p>
         </div>
-
-        {/* Footer */}
-        <footer style={{
-          marginTop: 'auto', paddingTop: 40,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          fontSize: 11.5, color: C.gray400,
-        }}>
-          <span>&copy; 2025 玄机 XUANJI &middot; 本系统由 AI 驱动</span>
-          <div style={{ display: 'flex', gap: 16 }}>
-            <button type="button" onClick={() => showToast('隐私政策')} style={{ color: C.gray400, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11.5, padding: 0 }}>隐私政策</button>
-            <button type="button" onClick={() => showToast('服务条款')} style={{ color: C.gray400, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11.5, padding: 0 }}>服务条款</button>
-          </div>
-        </footer>
       </main>
 
       {/* Toast */}
@@ -620,23 +483,69 @@ export function LoginView({ theme = {}, onLogin }: {
 
       {/* Keyframe animations + responsive */}
       <style>{`
-        @keyframes lv-pulse {
-          0%, 100% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.5; transform: scale(0.85); }
-        }
         @keyframes lv-spin { to { transform: rotate(360deg); } }
         @keyframes lv-toast-in {
           from { opacity: 0; transform: translateY(8px); }
           to { opacity: 1; transform: translateY(0); }
         }
+        @keyframes lv-fade-up {
+          from { opacity: 0; transform: translateY(14px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes lv-draw { to { stroke-dashoffset: 0; } }
+        @keyframes lv-node-in {
+          from { opacity: 0; transform: scale(0); }
+          to { opacity: 1; transform: scale(1); }
+        }
+        @keyframes lv-area-in { from { opacity: 0; } to { opacity: 1; } }
+        .lv-enter { animation: lv-fade-up 0.55s cubic-bezier(0.25,1,0.5,1) both; }
+        .lv-chart-line {
+          stroke-dasharray: 500; stroke-dashoffset: 500;
+          animation: lv-draw 1.4s cubic-bezier(0.65,0,0.35,1) 0.3s forwards;
+        }
+        .lv-chart-area { opacity: 0; animation: lv-area-in 0.8s ease 1.2s forwards; }
+        .lv-chart-node {
+          opacity: 0; transform-box: fill-box; transform-origin: center;
+          animation: lv-node-in 0.42s cubic-bezier(0.34,1.56,0.64,1) both;
+        }
         @media (max-width: 1024px) {
-          aside { display: none !important; }
-          main { flex: 1 !important; padding: 40px 32px !important; }
+          .lv-brand { display: none !important; }
+          .lv-form { flex: 1 !important; padding: 48px 40px !important; }
         }
         @media (max-width: 480px) {
-          main { padding: 32px 24px !important; }
+          .lv-form { padding: 40px 24px !important; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .lv-enter, .lv-chart-line, .lv-chart-area, .lv-chart-node { animation: none !important; }
+          .lv-chart-line { stroke-dashoffset: 0 !important; }
+          .lv-chart-area, .lv-chart-node { opacity: 1 !important; }
         }
       `}</style>
     </div>
+  )
+}
+
+/* ─── Sub-components / shared styles ─────────────────────── */
+const labelStyle: React.CSSProperties = {
+  display: 'block', fontSize: 13.5, fontWeight: 500,
+  color: C.gray700, marginBottom: 8,
+}
+
+const socialBtnStyle: React.CSSProperties = {
+  flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+  padding: '11px 0', fontSize: 14, fontWeight: 500, color: C.gray800,
+  background: C.white, border: `1.5px solid ${C.gray200}`,
+  borderRadius: C.radiusMd, cursor: 'pointer', fontFamily: 'inherit',
+  transition: 'all 0.2s ease',
+}
+
+function FieldError({ msg }: { msg: string }) {
+  return (
+    <p role="alert" style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#dc2626', marginTop: 6 }}>
+      <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" style={{ width: 12, height: 12 }}>
+        <circle cx="6" cy="6" r="5" /><path d="M6 4v2.5M6 8v.5" />
+      </svg>
+      {msg}
+    </p>
   )
 }

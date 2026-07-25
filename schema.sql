@@ -330,3 +330,79 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_notifications_recipient
     ON notifications (recipient, read, created_at DESC);
 
+-- ============================================================
+-- Knowledge Base (RAG): personal + org document libraries.
+-- Documents are uploaded/imported, then asynchronously parsed,
+-- chunked and embedded (text-embedding-v3, dim=1024) into
+-- knowledge_chunks for hybrid (vector + full-text) retrieval.
+-- Tenant isolation: personal libs filter by owner_key (routing_key),
+-- org libs by org_id. Mirrors the `memories` HNSW + tsvector pattern.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS knowledge_bases (
+    id          TEXT PRIMARY KEY,                     -- kb-<uuid>
+    name        TEXT NOT NULL,
+    scope       TEXT NOT NULL CHECK (scope IN ('personal','org')),
+    owner_key   TEXT NOT NULL DEFAULT '',             -- routing_key (personal ownership)
+    org_id      BIGINT,                                -- org ownership
+    description TEXT NOT NULL DEFAULT '',
+    created_by  TEXT NOT NULL DEFAULT '',              -- username
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_kb_owner ON knowledge_bases (scope, owner_key);
+CREATE INDEX IF NOT EXISTS idx_kb_org   ON knowledge_bases (scope, org_id);
+
+CREATE TABLE IF NOT EXISTS knowledge_documents (
+    id          TEXT PRIMARY KEY,                     -- doc-<uuid>
+    kb_id       TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL,
+    source_type TEXT NOT NULL CHECK (source_type IN ('file','url','feishu')),
+    source_uri  TEXT NOT NULL DEFAULT '',              -- file path / URL / feishu token
+    mime        TEXT NOT NULL DEFAULT '',
+    byte_size   BIGINT NOT NULL DEFAULT 0,
+    status      TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending','processing','ready','failed')),
+    error_msg   TEXT NOT NULL DEFAULT '',
+    chunk_count INTEGER NOT NULL DEFAULT 0,
+    created_by  TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_kdoc_kb     ON knowledge_documents (kb_id);
+CREATE INDEX IF NOT EXISTS idx_kdoc_status ON knowledge_documents (status);
+
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+    id          TEXT PRIMARY KEY,                     -- chk-<uuid>
+    doc_id      TEXT NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+    kb_id       TEXT NOT NULL,                         -- denormalized for per-kb filtering
+    chunk_index INTEGER NOT NULL,
+    content     TEXT NOT NULL,
+    token_count INTEGER NOT NULL DEFAULT 0,
+    locator     TEXT NOT NULL DEFAULT '',              -- 'page=3' / 'heading=...' (citation anchor)
+    embedding   vector(1024),
+    search_text TEXT NOT NULL DEFAULT '',
+    search_tsv  TSVECTOR GENERATED ALWAYS AS (to_tsvector('simple', search_text)) STORED,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_kchunk_embedding
+    ON knowledge_chunks USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
+
+CREATE INDEX IF NOT EXISTS idx_kchunk_tsv ON knowledge_chunks USING gin (search_tsv);
+CREATE INDEX IF NOT EXISTS idx_kchunk_kb  ON knowledge_chunks (kb_id);
+CREATE INDEX IF NOT EXISTS idx_kchunk_doc ON knowledge_chunks (doc_id);
+
+-- Session <-> knowledge base binding (enables auto pre-retrieval in P1).
+CREATE TABLE IF NOT EXISTS session_knowledge_bases (
+    session_id TEXT NOT NULL,
+    kb_id      TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (session_id, kb_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_skb_session ON session_knowledge_bases (session_id);
+

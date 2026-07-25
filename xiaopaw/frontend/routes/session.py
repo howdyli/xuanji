@@ -497,6 +497,116 @@ async def handle_session_messages(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
 
+# ── Session ↔ knowledge-base bindings ───────────────────────────────────────
+
+_MAX_SESSION_KB_BINDINGS = 5  # abuse guard: a session cites at most 5 bases
+
+
+async def _resolve_session_for_binding(
+    request: web.Request, *, write: bool
+) -> tuple[str | None, web.Response | None]:
+    """Auth + IDOR checks shared by the GET/PUT binding endpoints.
+
+    Mirrors the message-endpoint rules: unknown/foreign sessions are hidden
+    (404); team-shared sessions require 'edit' permission for writes (403).
+    """
+    if not check_auth(request):
+        return None, web.json_response({"error": "unauthorized"}, status=401)
+
+    session_id = request.match_info.get("session_id", "")
+    if not session_id:
+        return None, web.json_response({"error": "missing session_id"}, status=422)
+
+    session_mgr = request.app.get("session_mgr")
+    if not session_mgr:
+        return None, web.json_response({"error": "backend not ready"}, status=503)
+
+    entry = await session_mgr.get_session_by_id(session_id)
+    if not entry:
+        return None, web.json_response({"error": "not found"}, status=404)
+
+    routing_key = get_routing_key_from_request(request)
+    owning_rk = _find_owning_routing_key(session_mgr, session_id)
+    if owning_rk and owning_rk != routing_key and owning_rk != "p2p:web_user":
+        permission = _resolve_shared_session_permission(request, session_id)
+        if permission is None:
+            return None, web.json_response({"error": "not found"}, status=404)
+        if write and permission != "edit":
+            return None, web.json_response(
+                {"error": "read-only: this shared session grants view access only"},
+                status=403,
+            )
+    return session_id, None
+
+
+async def handle_session_kb_get(request: web.Request) -> web.Response:
+    """GET /api/frontend/sessions/{session_id}/knowledge-bases — list bindings.
+
+    Bases that were deleted or are no longer readable by the caller are
+    silently dropped from the response.
+    """
+    from xiaopaw.frontend.routes.knowledge import _get_store, _Tenant
+
+    session_id, err = await _resolve_session_for_binding(request, write=False)
+    if err is not None:
+        return err
+
+    store = _get_store(request)
+    if store is None:
+        return web.json_response({"kb_ids": [], "bases": []})
+
+    tenant = _Tenant(request)
+    bases = []
+    for kb_id in store.get_session_bases(session_id):
+        base = store.get_base(kb_id)
+        if base and tenant.can_read(base):
+            bases.append(base)
+    return web.json_response({"kb_ids": [b["id"] for b in bases], "bases": bases})
+
+
+async def handle_session_kb_put(request: web.Request) -> web.Response:
+    """PUT /api/frontend/sessions/{session_id}/knowledge-bases — replace bindings.
+
+    Body ``{"kb_ids": [...]}`` fully replaces the binding set (empty list
+    unbinds all). Every base must be readable by the caller.
+    """
+    from xiaopaw.frontend.routes.knowledge import _get_store, _Tenant
+
+    session_id, err = await _resolve_session_for_binding(request, write=True)
+    if err is not None:
+        return err
+
+    store = _get_store(request)
+    if store is None:
+        return web.json_response({"error": "database not available"}, status=503)
+
+    try:
+        body = await request.json()
+        raw = body.get("kb_ids")
+        if not isinstance(raw, list) or not all(isinstance(x, str) and x for x in raw):
+            raise ValueError("kb_ids must be a list of strings")
+    except Exception:
+        return web.json_response({"error": "kb_ids must be a list of strings"}, status=422)
+
+    kb_ids = list(dict.fromkeys(raw))  # dedupe, keep order
+    if len(kb_ids) > _MAX_SESSION_KB_BINDINGS:
+        return web.json_response(
+            {"error": f"at most {_MAX_SESSION_KB_BINDINGS} knowledge bases per session"},
+            status=422,
+        )
+
+    tenant = _Tenant(request)
+    for kb_id in kb_ids:
+        base = store.get_base(kb_id)
+        if not base or not tenant.can_read(base):
+            return web.json_response(
+                {"error": f"knowledge base not accessible: {kb_id}"}, status=403
+            )
+
+    store.set_session_bases(session_id, kb_ids)
+    return web.json_response({"kb_ids": kb_ids})
+
+
 async def handle_create_session(request: web.Request) -> web.Response:
     """POST /api/frontend/sessions - create a new session."""
     if not check_auth(request):
@@ -534,4 +644,10 @@ def register_session_routes(app: web.Application) -> None:
     app.router.add_post("/api/frontend/sessions", handle_create_session)
     app.router.add_get("/api/frontend/sessions", handle_sessions)
     app.router.add_get("/api/frontend/sessions/{session_id}/messages", handle_session_messages)
+    app.router.add_get(
+        "/api/frontend/sessions/{session_id}/knowledge-bases", handle_session_kb_get
+    )
+    app.router.add_put(
+        "/api/frontend/sessions/{session_id}/knowledge-bases", handle_session_kb_put
+    )
     app.router.add_get("/api/frontend/config", handle_config)

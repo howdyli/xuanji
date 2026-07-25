@@ -34,6 +34,7 @@ export const NAV_ITEMS = [
 export const EXPANDABLE_ITEMS = [
   { id: 'automation', label: '转化' },
   { id: 'model-config', label: '模型配置' },
+  { id: 'knowledge', label: '知识库' },
   { id: 'library', label: '资料库' },
 ]
 
