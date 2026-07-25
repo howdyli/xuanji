@@ -4,6 +4,7 @@ import { SendIcon, PaperclipIcon, SkillIcon } from './icons'
 import { SessionSkillsPicker } from './SessionSkillsPicker'
 import { SessionKnowledgePicker } from './SessionKnowledgePicker'
 import { useExperts, ExpertPickerPopover, ExpertPickerList } from './ExpertPicker'
+import { MentionPicker, useSessionSkills } from './MentionPicker'
 import {
   createBase,
   getDocument,
@@ -36,6 +37,22 @@ const QUICK_COMMANDS = [
   { label: '周报汇总', hint: '/weekly', prompt: '帮我汇总本周工作' },
 ]
 
+// --- @技能 提示提取（纯函数，供单测）---
+// 与启用技能名精确匹配的 @token 才计入；保序去重，最多 3 个。
+export function extractSkillHints(text: string, enabledSkills: string[]): string[] {
+  const hints: string[] = []
+  const re = /@(\S+)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const name = m[1]
+    if (enabledSkills.includes(name) && !hints.includes(name)) {
+      hints.push(name)
+      if (hints.length >= 3) break
+    }
+  }
+  return hints
+}
+
 export function UnifiedInputBar({
   isHome,
   loading,
@@ -48,7 +65,7 @@ export function UnifiedInputBar({
 }: {
   isHome: boolean
   loading: boolean
-  onSend: (text: string) => void
+  onSend: (text: string, opts?: { skillHints?: string[] }) => void
   sessionId: string | null
   inputRef: React.RefObject<HTMLTextAreaElement | null>
   embedded?: boolean
@@ -67,6 +84,10 @@ export function UnifiedInputBar({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const aliveRef = useRef(true)
   const { experts, loading: expertsLoading } = useExperts()
+  // 会话启用技能：供 @ 浮层技能栏与发送时 hints 提取共用
+  const { skills: sessionSkills, loading: sessionSkillsLoading } = useSessionSkills(
+    sessionId, !isHome && !!sessionId,
+  )
   const activeExpertObj = activeExpert ? experts.find((e) => e.name === activeExpert) : null
 
   useEffect(() => {
@@ -82,7 +103,13 @@ export function UnifiedInputBar({
   const handleSend = () => {
     const trimmed = text.trim()
     if (!trimmed || loading) return
-    onSend(trimmed)
+    // @技能 token 解析为 skill_hints（本条消息提示）；正文原样保留 @ 字样
+    const skillHints = extractSkillHints(trimmed, sessionSkills.map((s) => s.name))
+    if (skillHints.length > 0) {
+      onSend(trimmed, { skillHints })
+    } else {
+      onSend(trimmed)
+    }
     setText('')
     setShowCommands(false)
     setShowMention(false)
@@ -122,6 +149,13 @@ export function UnifiedInputBar({
     setText((prev) => prev.replace(MENTION_RE, '$1'))
     setShowMention(false)
     onSelectExpert(name)
+    inputRef.current?.focus()
+  }
+
+  // 选中 @ 技能：@token 替换为 `@技能名 `，留在文本里（发送时解析为 hints）。
+  const handleMentionSkillSelect = (name: string) => {
+    setText((prev) => prev.replace(MENTION_RE, `$1@${name} `))
+    setShowMention(false)
     inputRef.current?.focus()
   }
 
@@ -222,17 +256,33 @@ export function UnifiedInputBar({
             </div>
           )}
 
-          {/* @ 专家内联浮层（关键词实时过滤） */}
+          {/* @ 内联浮层：会话内为专家+技能两栏，首页保持专家单栏（关键词实时过滤） */}
           {showMention && (
             <div className="absolute bottom-full left-3 right-3 mb-1 bg-white border border-[rgba(0,0,0,0.08)] rounded-[12px] shadow-md overflow-hidden z-10 animate-fade-in">
-              <ExpertPickerList
-                experts={experts}
-                loading={expertsLoading}
-                query={mentionQuery}
-                activeName={activeExpert}
-                onSelect={handleMentionSelect}
-                showSearch={false}
-              />
+              {isHome ? (
+                <ExpertPickerList
+                  experts={experts}
+                  loading={expertsLoading}
+                  query={mentionQuery}
+                  activeName={activeExpert}
+                  onSelect={handleMentionSelect}
+                  showSearch={false}
+                />
+              ) : (
+                <MentionPicker
+                  open={showMention}
+                  anchorEl={inputRef.current}
+                  query={mentionQuery}
+                  experts={experts}
+                  expertsLoading={expertsLoading}
+                  skills={sessionSkills}
+                  skillsLoading={sessionSkillsLoading}
+                  activeExpert={activeExpert}
+                  onSelectExpert={handleMentionSelect}
+                  onSelectSkill={handleMentionSkillSelect}
+                  onClose={() => setShowMention(false)}
+                />
+              )}
             </div>
           )}
 

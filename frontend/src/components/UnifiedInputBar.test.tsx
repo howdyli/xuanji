@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { UnifiedInputBar } from './UnifiedInputBar'
+import { UnifiedInputBar, extractSkillHints } from './UnifiedInputBar'
 
 // useExperts() fetches /experts via apiFetch; stub it so the picker / @ list
 // and the active-expert chip can resolve a display name.
@@ -143,5 +143,31 @@ describe('UnifiedInputBar', () => {
     await user.type(textarea, '@')
     expect(await screen.findByText('技术交付专家团')).toBeInTheDocument()
     expect(screen.queryByText('日报生成')).not.toBeInTheDocument()
+  })
+})
+
+describe('extractSkillHints', () => {
+  const enabled = ['memory-save', 'web_browse', 'code-review']
+
+  it('picks only @tokens that exactly match enabled skill names', () => {
+    expect(extractSkillHints('@memory-save 记一下 @unknown 内容', enabled)).toEqual([
+      'memory-save',
+    ])
+  })
+
+  it('returns empty when no @token matches', () => {
+    expect(extractSkillHints('你好 @nobody', enabled)).toEqual([])
+    expect(extractSkillHints('没有提及', enabled)).toEqual([])
+  })
+
+  it('dedupes while preserving order', () => {
+    expect(
+      extractSkillHints('@web_browse 先查 @memory-save 再存 @web_browse', enabled),
+    ).toEqual(['web_browse', 'memory-save'])
+  })
+
+  it('caps at three hints', () => {
+    const many = ['s1', 's2', 's3', 's4']
+    expect(extractSkillHints('@s1 @s2 @s3 @s4', many)).toEqual(['s1', 's2', 's3'])
   })
 })

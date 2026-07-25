@@ -176,6 +176,7 @@ export interface StreamMessageBody {
   routing_key?: string
   sender_id?: string
   expert?: string
+  skill_hints?: string[]
 }
 
 export interface StreamStartData {

@@ -51,6 +51,32 @@ class _PreparedMessage:
     msg_id: str
 
 
+_MAX_SKILL_HINTS = 3
+_MAX_SKILL_HINT_LEN = 64
+
+
+def _sanitize_skill_hints(raw: object) -> list[str]:
+    """Lenient shape-check for the optional ``skill_hints`` body field.
+
+    Never raises and never yields a 4xx: a malformed field degrades to no
+    hints. Items must be non-empty strings (≤64 chars); order-preserving
+    dedupe, capped at 3. Whitelist enforcement stays in SkillLoaderTool.
+    """
+    if not isinstance(raw, list):
+        return []
+    hints: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        if not name or len(name) > _MAX_SKILL_HINT_LEN or name in hints:
+            continue
+        hints.append(name)
+        if len(hints) >= _MAX_SKILL_HINTS:
+            break
+    return hints
+
+
 async def _prepare_message(
     request: web.Request,
 ) -> tuple[_PreparedMessage | None, web.Response | None]:
@@ -68,6 +94,7 @@ async def _prepare_message(
         content = body.get("content", "").strip()
         session_id_hint = body.get("session_id", "")
         expert_name = body.get("expert", "").strip()
+        skill_hints = _sanitize_skill_hints(body.get("skill_hints"))
         if not content:
             return None, web.json_response({"error": "content is required"}, status=422)
     except Exception as exc:
@@ -133,6 +160,7 @@ async def _prepare_message(
         trace_id=new_trace_id(),
         expert_prompt=expert_prompt,
         expert_name=expert_display,
+        skill_hints=skill_hints,
     )
 
     return (

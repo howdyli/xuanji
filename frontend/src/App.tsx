@@ -231,7 +231,7 @@ function App() {
   }, [handleSelectSession])
 
   const handleSend = useCallback(
-    async (text: string) => {
+    async (text: string, opts?: { skillHints?: string[] }) => {
       if (!authToken) return
       // 捕获发送时的会话与暂存专家，用于新会话创建后迁移 pendingExpert。
       const startedSessionId = activeSessionIdRef.current
@@ -249,6 +249,7 @@ function App() {
         routing_key: `p2p:web_${currentUser?.username || 'anonymous'}`,
         sender_id: currentUser?.username || 'web_user',
         expert: effectiveExpertRef.current || undefined,
+        skill_hints: opts?.skillHints?.length ? opts.skillHints : undefined,
       }
 
       // 流式占位气泡：首个 delta 到达时创建，后续逐段追加（打字机）。

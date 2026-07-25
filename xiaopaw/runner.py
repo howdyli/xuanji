@@ -267,11 +267,16 @@ class Runner:
             try:
                 # Expert context is prepended only here (fed to the agent);
                 # inbound.content stays the user's raw text everywhere else.
-                agent_input = (
-                    f"{inbound.expert_prompt}\n\n---\n\n{inbound.content}"
-                    if inbound.expert_prompt
-                    else inbound.content
-                )
+                # Order: expert_prompt -> skill-hint line -> user content.
+                agent_input = inbound.content
+                if inbound.skill_hints:
+                    hint_line = (
+                        f"（用户为本条消息指定了优先使用技能：{', '.join(inbound.skill_hints)}。"
+                        "请先通过 skill_loader 加载并使用它处理本条消息，除非明显不适用。）"
+                    )
+                    agent_input = f"{hint_line}\n\n{agent_input}"
+                if inbound.expert_prompt:
+                    agent_input = f"{inbound.expert_prompt}\n\n---\n\n{agent_input}"
                 reply, used_skills = await self._agent_fn(
                     agent_input,
                     history,

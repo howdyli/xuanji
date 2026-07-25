@@ -30,6 +30,10 @@ class InboundMessage:
     # messages and session titles free of the system prompt).
     expert_prompt: str = ""
     expert_name: str = ""
+    # Per-message skill hints (transient): names the user @-mentioned for this
+    # message only. Injected as an instruction line when feeding the agent;
+    # enforcement stays with SkillLoaderTool's enabled_skills whitelist.
+    skill_hints: list[str] = field(default_factory=list)
 
 
 class SenderProtocol(Protocol):
