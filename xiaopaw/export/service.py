@@ -8,19 +8,29 @@ from dataclasses import asdict
 from xiaopaw.export.markdown_builder import build_session_markdown
 from xiaopaw.export.pdf_renderer import render_markdown_to_pdf
 from xiaopaw.export.docx_renderer import render_markdown_to_docx
+from xiaopaw.export.html_renderer import render_markdown_to_html
+from xiaopaw.export.pptx_renderer import render_markdown_to_pptx
 from xiaopaw.session.manager import SessionManager
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_FORMATS = ("markdown", "pdf", "docx")
+_SUPPORTED_FORMATS = ("markdown", "pdf", "docx", "pptx", "html")
 
 _CONTENT_TYPES = {
     "markdown": "text/markdown; charset=utf-8",
     "pdf": "application/pdf",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "html": "text/html; charset=utf-8",
 }
 
-_EXTENSIONS = {"markdown": ".md", "pdf": ".pdf", "docx": ".docx"}
+_EXTENSIONS = {
+    "markdown": ".md",
+    "pdf": ".pdf",
+    "docx": ".docx",
+    "pptx": ".pptx",
+    "html": ".html",
+}
 
 
 class ExportService:
@@ -71,8 +81,12 @@ class ExportService:
             file_bytes = md_text.encode("utf-8")
         elif fmt == "pdf":
             file_bytes = render_markdown_to_pdf(md_text)
-        else:  # docx
+        elif fmt == "docx":
             file_bytes = render_markdown_to_docx(md_text)
+        elif fmt == "pptx":
+            file_bytes = render_markdown_to_pptx(md_text)
+        else:  # html
+            file_bytes = render_markdown_to_html(md_text)
 
         filename = f"{session_id}{_EXTENSIONS[fmt]}"
         content_type = _CONTENT_TYPES[fmt]

@@ -1,5 +1,5 @@
 // --- Sidebar navigation config (shared by Sidebar and DashboardTopBar) ---
-import { HomeIcon, FolderIcon, SkillIcon, ExploreIcon } from './icons'
+import { HomeIcon, FolderIcon, SkillIcon, ExploreIcon, AutomationIcon, ModelConfigIcon, KnowledgeIcon, LibraryIcon } from './icons'
 
 function TeamIcon() {
   return (
@@ -27,16 +27,14 @@ export const NAV_ITEMS = [
   { id: 'chat', label: '任务', icon: <FolderIcon />, group: 'workflow', iconColor: 'blue' },
   { id: 'team', label: '团队', icon: <TeamIcon />, group: 'workflow', iconColor: 'blue' },
   { id: 'expert', label: '专家', icon: <ExpertIcon />, group: 'workflow', iconColor: 'blue' },
-  { id: 'skill', label: '技能', icon: <SkillIcon />, group: 'automation', iconColor: 'purple' },
-  { id: 'connector', label: '搜索', icon: <ExploreIcon />, group: 'system', iconColor: 'gray' },
-]
-
-export const EXPANDABLE_ITEMS = [
-  { id: 'automation', label: '转化' },
-  { id: 'model-config', label: '模型配置' },
-  { id: 'knowledge', label: '知识库' },
-  { id: 'library', label: '资料库' },
+  { id: 'skill', label: '技能', icon: <SkillIcon />, group: 'tools', iconColor: 'purple' },
+  { id: 'automation', label: '转化', icon: <AutomationIcon />, group: 'tools', iconColor: 'purple' },
+  { id: 'model-config', label: '模型配置', icon: <ModelConfigIcon />, group: 'tools', iconColor: 'purple' },
+  { id: 'connector', label: '搜索', icon: <ExploreIcon />, group: 'tools', iconColor: 'gray' },
+  { id: 'knowledge', label: '知识库', icon: <KnowledgeIcon />, group: 'resource', iconColor: 'gray' },
+  { id: 'library', label: '资料库', icon: <LibraryIcon />, group: 'resource', iconColor: 'gray' },
 ]
 
 export const NAV_WORKFLOW = NAV_ITEMS.filter(i => i.group === 'workflow')
-export const NAV_TOOLS = NAV_ITEMS.filter(i => i.group !== 'workflow')
+export const NAV_TOOLS = NAV_ITEMS.filter(i => i.group === 'tools')
+export const NAV_RESOURCES = NAV_ITEMS.filter(i => i.group === 'resource')

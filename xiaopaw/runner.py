@@ -11,6 +11,7 @@ import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+from xiaopaw.agents.direct_answer import is_simple_chat
 from xiaopaw.event_bus import AgentEvent, EventPayload
 from xiaopaw.feishu.session_key import routing_type
 from xiaopaw.hook_framework.crew_adapter import CrewObservabilityAdapter, set_current_adapter
@@ -44,10 +45,13 @@ class Runner:
         hook_registry: HookRegistry | None = None,
         event_bus: "EventBus | None" = None,
         role_resolver: "Callable[[InboundMessage], str] | None" = None,
+        direct_fn: AgentFn | None = None,
     ) -> None:
         self._session_mgr = session_mgr
         self._sender = sender
         self._agent_fn = agent_fn
+        # 直答旁路（短期#7）：简单问答走单次 LLM 直调；None = 关闭。
+        self._direct_fn = direct_fn
         self._idle_timeout = idle_timeout
         self._max_queue_size = max_queue_size
         self._data_dir = data_dir or Path("data")
@@ -277,13 +281,38 @@ class Runner:
                     agent_input = f"{hint_line}\n\n{agent_input}"
                 if inbound.expert_prompt:
                     agent_input = f"{inbound.expert_prompt}\n\n---\n\n{agent_input}"
-                reply, used_skills = await self._agent_fn(
-                    agent_input,
-                    history,
-                    session.id,
-                    key,
-                    session.verbose,
-                )
+                # 直答旁路：简单问答跳过 Crew 编排；旁路异常或空回复时
+                # 自动回退完整编排，保证行为只快不劣化。
+                reply = ""
+                used_skills = []
+                bypassed = False
+                if (
+                    self._direct_fn is not None
+                    and not inbound.skill_hints
+                    and is_simple_chat(inbound.content)
+                ):
+                    try:
+                        reply, used_skills = await self._direct_fn(
+                            agent_input,
+                            history,
+                            session.id,
+                            key,
+                            session.verbose,
+                        )
+                        bypassed = bool(reply)
+                    except Exception:
+                        logger.warning(
+                            "direct-answer bypass failed for %s, falling back to crew",
+                            key, exc_info=True,
+                        )
+                if not bypassed:
+                    reply, used_skills = await self._agent_fn(
+                        agent_input,
+                        history,
+                        session.id,
+                        key,
+                        session.verbose,
+                    )
             finally:
                 if adapter_token is not None:
                     set_current_adapter(None)

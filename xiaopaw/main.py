@@ -311,6 +311,16 @@ async def main() -> None:
         max_active_sessions=cfg.session.max_active_sessions,
     )
 
+    # One-shot JSONL -> PostgreSQL session migration: the sessions list is
+    # served PG-first, so sessions predating PG (JSONL only) would silently
+    # disappear from the frontend once PG comes online.
+    if pg_store:
+        from xiaopaw.frontend.store import migrate_jsonl_sessions
+        try:
+            migrate_jsonl_sessions(pg_store, session_mgr)
+        except Exception as exc:
+            logger.warning("JSONL->PG session migration failed (non-fatal): %s", exc)
+
     export_service = ExportService(session_mgr=session_mgr)
 
     workspace_dir = Path(cfg.workspace)
@@ -323,6 +333,24 @@ async def main() -> None:
     # Build Feishu sender (or CaptureSender in dev/test-API mode)
     sender = _build_sender(cfg, is_dev)
 
+    # 短期#9：会话级沙箱池（实验性，默认关闭；需本机 docker）
+    sandbox_pool = None
+    if cfg.sandbox.per_session:
+        from xiaopaw.sandbox_pool import SandboxPool
+        sandbox_pool = SandboxPool(
+            shared_url=cfg.sandbox.url,
+            image=cfg.sandbox.image,
+            port_start=cfg.sandbox.pool_port_start,
+            max_containers=cfg.sandbox.pool_max_containers,
+            idle_ttl_s=cfg.sandbox.pool_idle_ttl_s,
+        )
+        logger.info(
+            "per-session sandbox pool enabled (ports %d-%d, max %d)",
+            cfg.sandbox.pool_port_start,
+            cfg.sandbox.pool_port_start + cfg.sandbox.pool_max_containers - 1,
+            cfg.sandbox.pool_max_containers,
+        )
+
     agent_fn = build_agent_fn(
         sender=sender,
         workspace_dir=workspace_dir,
@@ -333,6 +361,7 @@ async def main() -> None:
         flags=cfg.feature_flags,
         skill_registry=skill_registry,
         user_skills_dir=user_skills_dir,
+        sandbox_pool=sandbox_pool,
     )
 
     # Load Hook framework (v3 layer)
@@ -347,10 +376,20 @@ async def main() -> None:
     )
     logger.info("hook framework loaded: %s", hook_registry.summary())
 
+    # 短期#7：直答旁路 —— 简单问答跳过 Crew 编排，直调 general_chat 模型。
+    direct_fn = None
+    if cfg.feature_flags.enable_direct_answer_bypass:
+        from xiaopaw.agents.direct_answer import build_direct_answer_fn
+        direct_fn = build_direct_answer_fn(
+            max_history_turns=cfg.session.max_history_turns
+        )
+        logger.info("direct-answer bypass enabled (task_type=general_chat)")
+
     runner = Runner(
         session_mgr=session_mgr,
         sender=sender,
         agent_fn=agent_fn,
+        direct_fn=direct_fn,
         idle_timeout=cfg.runner.idle_timeout_s,
         max_queue_size=cfg.runner.max_queue_size,
         data_dir=data_dir,
@@ -583,6 +622,8 @@ async def main() -> None:
         await feishu_listener.stop()
     await cron_svc.stop()
     await cleanup_svc.stop()
+    if sandbox_pool is not None:
+        await sandbox_pool.shutdown()
     if market_sync_task is not None:
         market_sync_task.cancel()
         try:

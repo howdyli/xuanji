@@ -487,6 +487,7 @@ def build_agent_fn(
     flags: FeatureFlags | None = None,
     skill_registry: Any | None = None,
     user_skills_dir: Path | None = None,
+    sandbox_pool: Any | None = None,
 ) -> AgentFn:
     ctx_dir.mkdir(parents=True, exist_ok=True)
 
@@ -505,6 +506,11 @@ def build_agent_fn(
             if candidate.is_dir():
                 user_ws = candidate
 
+        # 短期#9：会话级沙箱 —— 从池中取本会话专属沙箱，失败自动回退共享沙箱
+        turn_sandbox_url = sandbox_url
+        if sandbox_pool is not None:
+            turn_sandbox_url = await sandbox_pool.acquire(session_id)
+
         crew_instance = MemoryAwareCrew(
             session_id=session_id,
             routing_key=routing_key,
@@ -515,7 +521,7 @@ def build_agent_fn(
             history_all=history,
             db_dsn=db_dsn,
             max_history_turns=max_history_turns,
-            sandbox_url=sandbox_url,
+            sandbox_url=turn_sandbox_url,
             flags=flags,
             skill_registry=skill_registry,
             user_skills_dir=user_skills_dir,

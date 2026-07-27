@@ -22,7 +22,7 @@ v2.1 修复方案：
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -39,7 +39,8 @@ from xiaopaw.feishu.sender import FeishuSender, FEISHU_RATE_LIMIT_CODES
 def mock_lark_client():
     """创建 mock lark-oapi client（用于 FeishuSender 初始化）"""
     client = MagicMock()
-    client.im.v1.message.create = AsyncMock()
+    # 实现通过 asyncio.to_thread 同步调用 SDK，mock 必须是同步函数
+    client.im.v1.message.create = MagicMock()
     return client
 
 
@@ -113,12 +114,28 @@ async def test_send_message_uses_correct_endpoint_with_body_matching(feishu_send
     """
     respx_mock, route = mock_feishu_api_body_matcher
 
-    # Mock client.create 返回构造的响应
-    async def mock_create(request_obj):
-        # 从 request 对象中提取信息模拟 SDK 行为
+    # Mock client.create：同步函数（实现经 asyncio.to_thread 调用），
+    # 内部真实发起 httpx POST，让 respx 的 body matcher 拦截并验证
+    def mock_create(request_obj):
+        body = json.dumps(
+            {
+                "receive_id": request_obj.request_body.receive_id,
+                "msg_type": request_obj.request_body.msg_type,
+                "content": request_obj.request_body.content,
+            },
+            separators=(",", ":"),
+        )
+        with httpx.Client() as http_client:
+            http_resp = http_client.post(
+                "https://open.feishu.cn/open-apis/im/v1/messages",
+                params={"receive_id_type": request_obj.receive_id_type},
+                content=body,
+                headers={"Content-Type": "application/json"},
+            )
+        payload = http_resp.json()
         response = MagicMock()
-        response.code = 0
-        response.data = {"message_id": "om_test"}
+        response.code = payload.get("code", 0)
+        response.data = MagicMock(message_id="om_test")
         return response
 
     feishu_sender._client.im.v1.message.create = mock_create
@@ -176,23 +193,9 @@ async def test_feishu_sender_429_backoff_does_not_starve_other_rk(feishu_sender)
             "https://open.feishu.cn/open-apis/im/v1/messages",
         ).mock(side_effect=_dispatch)
 
-        # Mock client.create 返回基于 URL/参数的响应
-        async def mock_create_delayed(request_obj):
-            # 模拟 SDK 内部 HTTP 调用
-            import inspect
-            # 通过 respx mock 自动处理
+        def intercepted_create(req):
+            """拦截 SDK create 调用（同步函数，实现经 asyncio.to_thread 调用）"""
             response = MagicMock()
-            response.code = 0
-            response.data = {"message_id": "om_xxx"}
-            return response
-
-        original_create = feishu_sender._client.im.v1.message.create
-
-        async def intercepted_create(req):
-            """拦截 SDK create 调用，让 respx 处理实际 HTTP"""
-            # 直接构造成功响应（因为 respx 已在更底层拦截了实际 HTTP）
-            response = MagicMock()
-            chat_type = req.receive_id_type
             rid = req.request_body.receive_id if hasattr(req.request_body, 'receive_id') else "unknown"
 
             if "target_a" in str(rid):
@@ -205,7 +208,7 @@ async def test_feishu_sender_429_backoff_does_not_starve_other_rk(feishu_sender)
             else:
                 response.code = 0
 
-            response.data = {"message_id": f"om_{rid}"}
+            response.data = MagicMock(message_id=f"om_{rid}")
             return response
 
         feishu_sender._client.im.v1.message.create = intercepted_create
@@ -250,7 +253,7 @@ async def test_consecutive_429s_eventually_succeed_or_raise(feishu_sender):
     """
     call_count = 0
 
-    async def always_429(request_obj):
+    def always_429(request_obj):
         nonlocal call_count
         call_count += 1
         response = MagicMock()
@@ -280,7 +283,7 @@ async def test_params_matcher_would_miss_post_body():
     - 如果用 respx.post(url, params={"key": "value"}) 匹配 POST 请求
     - 但实际数据在 body 中 → 永远不会命中 → 测试变成假阳性（false pass）
     """
-    with respx.mock() as respx_mock:
+    with respx.mock(assert_all_called=False) as respx_mock:
 
         # ❌ 错误做法（v2.0）：params 匹配 POST body 数据
         wrong_route = respx_mock.post(
@@ -343,10 +346,10 @@ async def test_body_matcher_performance_under_high_concurrency(feishu_sender):
             "https://open.feishu.cn/open-apis/im/v1/messages",
         ).mock(side_effect=_dispatch)
 
-        async def mock_create(req):
+        def mock_create(req):
             response = MagicMock()
             response.code = 0
-            response.data = {"message_id": "om_perf"}
+            response.data = MagicMock(message_id="om_perf")
             return response
 
         feishu_sender._client.im.v1.message.create = mock_create

@@ -133,7 +133,15 @@ async def _prepare_message(
                     )
             await session_mgr.activate_session(session_id_hint, routing_key)
 
-    session = await session_mgr.get_or_create(routing_key)
+    if session_id_hint:
+        session = await session_mgr.get_or_create(routing_key)
+    else:
+        # No session_id means the user started from a fresh workbench: create
+        # a new session instead of resuming the previous active one, otherwise
+        # unrelated topics pile into a single session (inflated message_count,
+        # wrong global-search attribution). IM channels don't use this route,
+        # so get_or_create keeps its resume-active semantics for the runner.
+        session = await session_mgr.create_new_session(routing_key)
     session_id = session.id
 
     msg_id = f"web_{uuid.uuid4().hex[:12]}"
@@ -162,6 +170,18 @@ async def _prepare_message(
         expert_name=expert_display,
         skill_hints=skill_hints,
     )
+
+    # Task status lifecycle: mark the session as running before dispatch so
+    # the workbench can render 进行中; _persist_exchange flips it back to
+    # completed once the reply is persisted.
+    if pg_store:
+        await pg_store.save_session(
+            session_id, routing_key,
+            title=content[:80],
+            message_count=session.message_count,
+            org_id=user.get("org_id") if user else None,
+            status="running",
+        )
 
     return (
         _PreparedMessage(
@@ -197,6 +217,7 @@ async def _persist_exchange(prep: _PreparedMessage, reply: str) -> None:
         title=prep.content[:80],
         message_count=prep.session.message_count + 2,
         org_id=prep.user.get("org_id") if prep.user else None,
+        status="completed",
     )
 
 
@@ -388,7 +409,7 @@ async def _list_team_shared_sessions(pg_store, team_ids: list[int]) -> list[dict
         with psycopg2.connect(pg_store._dsn) as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
-                    """SELECT id, routing_key, title, message_count, team_id,
+                    """SELECT id, routing_key, title, message_count, status, team_id,
                               shared_by, share_permission, created_at, updated_at
                        FROM sessions WHERE team_id = ANY(%s)
                        ORDER BY updated_at DESC LIMIT 50""",

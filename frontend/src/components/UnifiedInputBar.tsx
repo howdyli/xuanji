@@ -286,31 +286,19 @@ export function UnifiedInputBar({
             </div>
           )}
 
-          {/* Model selector (home) or mode tabs (chat) */}
-          {isHome ? (
-            <div className="flex items-center gap-2 mb-2.5">
-              <button className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#E8F5E0] border border-[#D0E8C0] text-[11px] font-medium text-[#3D7A12] hover:bg-[#dcefcf] transition-colors">
-                <span className="w-2 h-2 rounded-full bg-[#3D7A12]" />
-                灵享妙语 Pro
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                  <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
+          {/* Mode tabs (unified across home and chat, per composer design) */}
+          <div className="flex items-center gap-0.5 bg-[#f0efe9] rounded-[6px] p-[3px] w-fit mb-2.5">
+            {['实景沙箱', 'Chat+', 'Auto', '技能'].map((tab, i) => (
+              <button
+                key={tab}
+                className={`px-3 py-1 text-[11px] font-medium rounded-[4px] transition-all duration-150 whitespace-nowrap ${
+                  i === 0 ? 'bg-white text-[#1a1917] border border-[rgba(0,0,0,0.08)] shadow-sm' : 'text-[#9b9892] hover:text-[#6b6963]'
+                }`}
+              >
+                {tab}
               </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-0.5 bg-[#f0efe9] rounded-[6px] p-[3px] w-fit mb-2.5">
-              {['实景沙箱', 'Chat+', 'Auto', '技能'].map((tab, i) => (
-                <button
-                  key={tab}
-                  className={`px-3 py-1 text-[11px] font-medium rounded-[4px] transition-all duration-150 whitespace-nowrap ${
-                    i === 0 ? 'bg-white text-[#1a1917] shadow-sm' : 'text-[#9b9892] hover:text-[#6b6963]'
-                  }`}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
-          )}
+            ))}
+          </div>
 
           {/* 当前专家芯片（可一键取消） */}
           {activeExpert && (
@@ -379,27 +367,24 @@ export function UnifiedInputBar({
 
           <div className="flex items-center justify-between mt-2.5 pt-2.5 border-t border-[rgba(0,0,0,0.08)]">
             <div className="flex items-center gap-1.5">
-              {/* Attachment — 仅活动会话可用，上传进知识库 */}
-              {kbEnabled && (
-                <>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    accept={UPLOAD_ACCEPT}
-                    className="hidden"
-                    onChange={(e) => handleFiles(e.target.files)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-[30px] h-[30px] rounded-[8px] flex items-center justify-center text-[#6b6963] hover:bg-white hover:text-[#1a1917] transition-colors"
-                    title="上传文件到知识库（pdf/docx/md/txt，≤32MB）"
-                  >
-                    <PaperclipIcon />
-                  </button>
-                </>
-              )}
+              {/* Attachment — 常驻展示；无活动会话时禁用（上传进知识库） */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={UPLOAD_ACCEPT}
+                className="hidden"
+                onChange={(e) => handleFiles(e.target.files)}
+              />
+              <button
+                type="button"
+                disabled={!kbEnabled}
+                onClick={() => fileInputRef.current?.click()}
+                className="w-[30px] h-[30px] rounded-[8px] flex items-center justify-center text-[#6b6963] hover:bg-white hover:text-[#1a1917] transition-colors disabled:text-[#c4c1ba] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                title={kbEnabled ? '上传文件到知识库（pdf/docx/md/txt，≤32MB）' : '开始会话后可上传文件'}
+              >
+                <PaperclipIcon />
+              </button>
               {/* Voice — 功能待上线，暂禁用避免误导 */}
               <button disabled className="w-[30px] h-[30px] rounded-[8px] flex items-center justify-center text-[#c4c1ba] opacity-50 cursor-not-allowed transition-colors" title="语音（即将支持）">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -433,18 +418,28 @@ export function UnifiedInputBar({
                   anchorEl={expertBtnRef.current}
                 />
               </div>
-              {/* Skill button in chat mode */}
-              {!isHome && <SkillButton sessionId={sessionId} />}
-              {/* Knowledge-base binding button (仅活动会话) */}
-              {kbEnabled && sessionId && (
+              {/* Skill button (home + chat; picker 兼容无会话) */}
+              <SkillButton sessionId={sessionId} />
+              {/* Knowledge-base binding button — 无活动会话时展示禁用态 */}
+              {kbEnabled && sessionId ? (
                 <KnowledgeButton sessionId={sessionId} refreshKey={kbRefreshKey} />
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] border border-transparent text-gray-400 opacity-60 cursor-not-allowed"
+                  title="开始会话后可绑定知识库"
+                >
+                  <span className="text-[13px] leading-none">📚</span>
+                  <span>知识库</span>
+                </button>
               )}
             </div>
             <button
               onClick={handleSend}
               disabled={loading || !text.trim()}
               className={`w-[34px] h-[34px] rounded-full flex items-center justify-center text-white transition-all duration-150 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed shrink-0 btn-press ${sendPressed ? 'scale-95' : ''}`}
-              style={{ background: 'linear-gradient(135deg, #4F6EF7, #7C5CFC)' }}
+              style={{ background: 'linear-gradient(135deg, #B3AFFA, #9D97F6)' }}
             >
               <SendIcon />
             </button>

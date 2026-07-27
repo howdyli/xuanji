@@ -73,7 +73,7 @@ async def list_sessions_for_user(pg_store, routing_key: str) -> list[dict]:
         with psycopg2.connect(pg_store._dsn) as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
-                    """SELECT id, routing_key, title, message_count, created_at, updated_at
+                    """SELECT id, routing_key, title, message_count, status, created_at, updated_at
                        FROM sessions WHERE routing_key = %s
                           OR routing_key = 'p2p:web_user'
                        ORDER BY updated_at DESC LIMIT 50""",

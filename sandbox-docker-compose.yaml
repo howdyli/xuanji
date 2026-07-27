@@ -19,7 +19,9 @@
 
 services:
   aio-sandbox:
-    image: ghcr.io/agent-infra/sandbox:latest
+    # [v1.2] Pin by digest: `:latest` is a supply-chain risk and breaks
+    # reproducibility (a silent upstream update can change sandbox behavior).
+    image: ghcr.io/agent-infra/sandbox:latest@sha256:e0d7cfed24b373850f5f3df64439e9fcaa17e6810ab3234222e901a5fa08397e
     ports:
       - "127.0.0.1:8030:8080"  # [v1.1] 绑定到 localhost，防止外网访问
     environment:
@@ -43,6 +45,17 @@ services:
     cap_add:
       # 仅保留必要的网络能力
       - NET_BIND_SERVICE  # 允许绑定端口
+      # [v1.2] 镜像入口脚本启动时要 groupadd/useradd/chown 并写 /etc/sudoers.d/，
+      # cap_drop: ALL 会让这些操作全部 Permission denied，容器进入崩溃循环。
+      # 以下是入口脚本所需的最小能力集：
+      - CHOWN         # chown 工作目录/挂载点
+      - DAC_OVERRIDE  # 写 /etc/passwd、/etc/sudoers.d/ 等 root-only 文件
+      - FOWNER        # chmod 非自有文件
+      - SETGID        # groupadd / 切换组身份
+      - SETUID        # useradd / 切换用户身份
+      - SETPCAP       # 入口脚本降权时收缩能力集
+      - AUDIT_WRITE   # sudo/PAM 写审计日志（缺失会导致 sudo 失败）
+      - KILL          # 进程管理（supervisor 重启子进程）
     # [v1.1] 资源限制（防止资源耗尽攻击）
     deploy:
       resources:

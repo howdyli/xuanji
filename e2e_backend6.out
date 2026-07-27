@@ -1,0 +1,47 @@
+14:02:15 [-] WARNING xiaopaw.config.safety: debug.test_api_token is empty or a well-known default; set XIAOPAW_TESTAPI_TOKEN to a strong secret before exposing TestAPI
+14:02:15 [-] INFO  xiaopaw.config.safety: all production safety checks passed
+14:02:16 [-] INFO  crewai_core.settings: Using config path: /Users/howdy/.config/crewai/settings.json
+14:02:16 [-] INFO  xiaopaw.frontend.store: PGStore: connected to PostgreSQL
+14:02:16 [-] INFO  __main__: SearchService initialized (pg_dsn=postgresql://xiaopaw:xiaopaw@localhost:5...)
+14:02:16 [-] INFO  __main__: ActivityRecorder subscribed to EventBus (pg_store=enabled)
+14:02:16 [-] INFO  __main__: NotificationService subscribed to EventBus (approve/reject)
+14:02:16 [-] INFO  xiaopaw.skills_mgmt.registry: SkillRegistry: synced 13 skills to DB
+14:02:16 [-] INFO  __main__: hook framework loaded: {'before_turn': ['[global] structured_log.before_turn_handler', '[global] langfuse_trace.before_turn_handler'], 'before_llm': ['[global] structured_log.before_llm_handler', '[global] langfuse_trace.before_llm_handler'], 'before_tool_call': ['[global] structured_log.before_tool_handler', '[global] langfuse_trace.before_tool_handler', '[global] sandbox_guard.before_tool_handler', '[global] permission_gate.before_tool_handler', '[global] cost_guard.before_tool_handler'], 'after_tool_call': ['[global] structured_log.after_tool_handler', '[global] langfuse_trace.after_tool_handler', '[global] loop_detector.after_tool_handler', '[global] retry_tracker.after_tool_handler'], 'after_turn': ['[global] structured_log.after_turn_handler', '[global] langfuse_trace.after_turn_handler', '[global] cost_guard.after_turn_handler', '[global] loop_detector.after_turn_handler'], 'task_complete': ['[global] structured_log.task_complete_handler', '[global] langfuse_trace.task_complete_handler'], 'session_end': ['[global] structured_log.session_end_handler', '[global] langfuse_trace.flush_and_close', '[global] audit_logger.session_end_handler']}
+14:02:16 [-] INFO  xiaopaw.observability.metrics_server: metrics server listening on 0.0.0.0:8090
+14:02:16 [-] INFO  xiaopaw.cron.service: cron service started (interval=30s)
+14:02:16 [-] INFO  xiaopaw.cleanup.service: cleanup service started (run_hour_utc=3)
+14:02:16 [-] INFO  __main__: market sync scheduled (interval=6.0h)
+14:02:16 [-] WARNING __main__: CommunityRegistry missing background task methods, skipping community tasks
+14:02:16 [-] INFO  __main__: TestAPI listening on 127.0.0.1:9090
+14:02:16 [-] WARNING __main__: Multiple users found (8); skipping legacy migration to avoid misattribution
+14:02:16 [-] INFO  xiaopaw.llm.channel_manager: [ChannelManager] loaded 2 channels from data/channels.json
+14:02:16 [-] INFO  xiaopaw.frontend.server: frontend: serving static files from /Users/howdy/work-source/xiaopaw-v2/frontend/build
+14:02:16 [-] INFO  __main__: Frontend listening on http://127.0.0.1:8080
+14:02:16 [-] INFO  __main__: 玄机 started (env=dev)
+14:02:16 [-] WARNING __main__: 
+==================================================================
+ SANDBOX UNREACHABLE at http://localhost:8030/mcp (ClientConnectorError: Cannot connect to host localhost:8030 ssl:default [Multiple exceptions: [Errno 61] Connect call failed ('::1', 8030, 0, 0), [Errno 61] Connect call failed ('127.0.0.1', 8030)])
+ -> Skill execution (Sub-Crew) will be UNAVAILABLE.
+ -> Reference/chat still work, but task skills (search/pdf/docx/
+    memory-save/web_browse/...) cannot run.
+ -> Start it with: docker compose -f sandbox-docker-compose.yaml up -d
+==================================================================
+14:02:22 [-] WARNING xiaopaw.skills_mgmt.market: MarketSync vercel fetch failed: 404, message='Not Found', url='https://raw.githubusercontent.com/vercel/skills/main/index.json'
+14:02:22 [-] INFO  xiaopaw.skills_mgmt.market: MarketSync done: {'sources': {'vercel': {'ok': False, 'error': "404, message='Not Found', url='https://raw.githubusercontent.com/vercel/skills/main/index.json'"}}, 'total_upserted': 0}
+14:02:45 [-] INFO  aiohttp.access: 127.0.0.1 [25/Jul/2026:22:02:45 +0800] "GET /api/frontend/sessions HTTP/1.1" 200 1512 "http://localhost:5173/" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Qoder/1.18.0 Chrome/148.0.7778.97 Electron/42.2.0 Safari/537.36"
+14:02:57 [-] INFO  aiohttp.access: 127.0.0.1 [25/Jul/2026:22:02:57 +0800] "GET /api/frontend/notifications/unread-count HTTP/1.1" 200 190 "http://localhost:5173/" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Qoder/1.18.0 Chrome/148.0.7778.97 Electron/42.2.0 Safari/537.36"
+14:03:15 [-] INFO  aiohttp.access: 127.0.0.1 [25/Jul/2026:22:03:15 +0800] "GET /api/frontend/sessions HTTP/1.1" 200 1512 "http://localhost:5173/" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Qoder/1.18.0 Chrome/148.0.7778.97 Electron/42.2.0 Safari/537.36"
+14:03:27 [-] INFO  __main__: shutdown signal received
+14:03:27 [-] INFO  xiaopaw.cron.service: cron service stopped
+14:03:27 [-] INFO  xiaopaw.runner: runner shutting down...
+14:03:27 [-] INFO  xiaopaw.runner: runner shutdown complete
+14:03:27 [-] INFO  __main__: XiaoPaw v2 shutdown complete
+
+-----
+
+WeasyPrint could not import some external libraries. Please carefully follow the installation steps before reporting an issue:
+https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation
+https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#troubleshooting 
+
+-----
+

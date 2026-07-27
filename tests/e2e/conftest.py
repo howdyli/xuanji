@@ -26,6 +26,29 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _WORKSPACE_INIT = _PROJECT_ROOT / "workspace-init"
 _SHARED_HOOKS = _PROJECT_ROOT / "shared_hooks"
 
+
+@pytest.fixture(scope="session", autouse=True)
+def _init_model_router() -> None:
+    """Initialize the ModelRouter singleton from config.yaml (mirrors main._init_model_router).
+
+    e2e tests build crews via build_agent_fn, which calls
+    model_router.get_llm(task_type=...). Without initialization the router has
+    no models registered and _select_best() crashes with
+    `min() arg is an empty sequence`.
+    """
+    import yaml
+
+    from xiaopaw.llm.model_router import model_router
+
+    if model_router._models:
+        return
+    cfg_path = _PROJECT_ROOT / "config.yaml"
+    if not cfg_path.exists():
+        return
+    with cfg_path.open("r", encoding="utf-8") as f:
+        full_cfg = yaml.safe_load(f) or {}
+    model_router.init_from_config(full_cfg)
+
 _LF_HOST = os.environ.get("XIAOPAW_LANGFUSE_BASE_URL", "") or os.environ.get("LANGFUSE_BASE_URL", "http://localhost:3000")
 _LF_PK = os.environ.get("XIAOPAW_LANGFUSE_PUBLIC_KEY", "") or os.environ.get("LANGFUSE_PUBLIC_KEY", "")
 _LF_SK = os.environ.get("XIAOPAW_LANGFUSE_SECRET_KEY", "") or os.environ.get("LANGFUSE_SECRET_KEY", "")

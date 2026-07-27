@@ -217,6 +217,10 @@ def pg_store_and_dsn():
                 if cur.fetchone()[0] is None:
                     pytest.skip("sessions table missing; apply schema.sql first")
                 cur.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS org_id BIGINT")
+                cur.execute(
+                    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS "
+                    "status TEXT NOT NULL DEFAULT 'completed'"
+                )
     finally:
         conn.close()
 

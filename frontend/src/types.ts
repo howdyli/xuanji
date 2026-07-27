@@ -12,6 +12,7 @@ export interface Session {
   routing_key: string
   title: string
   message_count: number
+  status?: 'running' | 'completed'
   created_at: string
   updated_at: string
 }

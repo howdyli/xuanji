@@ -1,14 +1,16 @@
 // --- Top bar ---
-import { NAV_ITEMS, EXPANDABLE_ITEMS } from './navConfig'
+import { NAV_ITEMS } from './navConfig'
 import { NotificationBell } from './NotificationBell'
 
-export function DashboardTopBar({ onOpenDrawer, isHome, activeNav, username, onSearchClick, authToken }: { onOpenDrawer: () => void; isHome?: boolean; activeNav?: string; username?: string; onSearchClick?: () => void; authToken: string }) {
+export type HomeTab = 'all' | 'running' | 'done'
+
+export function DashboardTopBar({ onOpenDrawer, isHome, activeNav, username, onSearchClick, authToken, homeTab = 'all', onHomeTabChange }: { onOpenDrawer: () => void; isHome?: boolean; activeNav?: string; username?: string; onSearchClick?: () => void; authToken: string; homeTab?: HomeTab; onHomeTabChange?: (t: HomeTab) => void }) {
   const hour = new Date().getHours()
   const greetText = hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好'
 
   if (!isHome) {
     // Non-home views: dynamic breadcrumb bar
-    const breadcrumbLabel = [...NAV_ITEMS, ...EXPANDABLE_ITEMS].find(item => item.id === activeNav)?.label || '工作台'
+    const breadcrumbLabel = NAV_ITEMS.find(item => item.id === activeNav)?.label || '工作台'
     return (
       <div className="topbar" style={{ borderBottom: 'none', boxShadow: 'var(--shadow-xs)', background: 'var(--bg-primary)' }}>
         <nav style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-1.5)', fontSize: '13px', color: 'var(--text-tertiary)' }} aria-label="面包屑">
@@ -41,9 +43,9 @@ export function DashboardTopBar({ onOpenDrawer, isHome, activeNav, username, onS
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-8)' }}>
         <h1 className="topbar-title">工作台</h1>
         <div className="tabs-container">
-          <button className={`tab-button ${true ? 'active' : ''}`}>全部</button>
-          <button className="tab-button">进行中</button>
-          <button className="tab-button">已完成</button>
+          <button className={`tab-button ${homeTab === 'all' ? 'active' : ''}`} onClick={() => onHomeTabChange?.('all')}>全部</button>
+          <button className={`tab-button ${homeTab === 'running' ? 'active' : ''}`} onClick={() => onHomeTabChange?.('running')}>进行中</button>
+          <button className={`tab-button ${homeTab === 'done' ? 'active' : ''}`} onClick={() => onHomeTabChange?.('done')}>已完成</button>
         </div>
       </div>
 

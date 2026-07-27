@@ -2,8 +2,8 @@
 import { useState, useEffect, useRef } from 'react'
 import type { Session } from '../types'
 import { formatRelativeTime } from '../utils/format'
-import { AutomationIcon, ModelConfigIcon, LibraryIcon, KnowledgeIcon, SettingsIcon } from './icons'
-import { NAV_ITEMS, NAV_WORKFLOW, NAV_TOOLS } from './navConfig'
+import { SettingsIcon } from './icons'
+import { NAV_ITEMS, NAV_WORKFLOW, NAV_TOOLS, NAV_RESOURCES } from './navConfig'
 
 // --- Export Menu Component ---
 function ExportMenu({
@@ -12,7 +12,7 @@ function ExportMenu({
   onClose,
 }: {
   sessionId: string
-  onExport: (sessionId: string, format: 'pdf' | 'markdown' | 'docx') => void
+  onExport: (sessionId: string, format: 'pdf' | 'markdown' | 'docx' | 'pptx' | 'html') => void
   onClose: () => void
 }) {
   const menuRef = useRef<HTMLDivElement>(null)
@@ -27,10 +27,12 @@ function ExportMenu({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [onClose])
 
-  const items: { format: 'pdf' | 'markdown' | 'docx'; icon: string; label: string }[] = [
+  const items: { format: 'pdf' | 'markdown' | 'docx' | 'pptx' | 'html'; icon: string; label: string }[] = [
     { format: 'pdf', icon: '📄', label: '导出为 PDF' },
     { format: 'markdown', icon: '📝', label: '导出为 Markdown' },
     { format: 'docx', icon: '📋', label: '导出为 DOCX' },
+    { format: 'pptx', icon: '📊', label: '导出为 PPTX' },
+    { format: 'html', icon: '🌐', label: 'HTML 预览' },
   ]
 
   return (
@@ -115,7 +117,7 @@ export function Sidebar({
   onProfile: () => void
   collapsed?: boolean
   onToggleCollapse?: () => void
-  onExport: (sessionId: string, format: 'pdf' | 'markdown' | 'docx') => void
+  onExport: (sessionId: string, format: 'pdf' | 'markdown' | 'docx' | 'pptx' | 'html') => void
   exportingSessionId: string | null
 }) {
   const [expanded, setExpanded] = useState(!collapsed)
@@ -272,6 +274,17 @@ useEffect(() => {
 
         {expanded && <div className="sidebar-section-title">工具</div>}
         {NAV_TOOLS.map((item) => renderNavItem(item, expanded))}
+
+        {/* Separator between tools and resources */}
+        <div style={{
+          width: '80%',
+          height: '1px',
+          background: 'rgba(26,58,82,0.06)',
+          margin: '8px auto',
+        }} />
+
+        {expanded && <div className="sidebar-section-title">资源</div>}
+        {NAV_RESOURCES.map((item) => renderNavItem(item, expanded))}
       </nav>
 
       {/* Recent tasks (only when expanded) */}
@@ -460,38 +473,6 @@ useEffect(() => {
             flexDirection: 'column',
             gap: '2px',
           }}>
-            {[
-              { id: 'automation', label: '转化', icon: <AutomationIcon /> },
-              { id: 'model-config', label: '模型配置', icon: <ModelConfigIcon /> },
-              { id: 'knowledge', label: '知识库', icon: <KnowledgeIcon /> },
-              { id: 'library', label: '资料库', icon: <LibraryIcon /> },
-            ].map(item => (
-              <button
-                key={item.id}
-                onClick={() => { onNavChange(item.id); setUserMenuOpen(false) }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  padding: '8px 12px',
-                  borderRadius: '8px',
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#3D6076',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  transition: 'background 0.12s',
-                  width: '100%',
-                  textAlign: 'left',
-                }}
-                onMouseOver={(e) => e.currentTarget.style.background = 'rgba(56,152,236,0.08)'}
-                onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
-              >
-                {item.icon}
-                <span>{item.label}</span>
-              </button>
-            ))}
-            <div style={{ height: '1px', background: 'rgba(26,58,82,0.08)', margin: '4px 0' }} />
             <button
               onClick={() => { onProfile(); setUserMenuOpen(false) }}
               style={{

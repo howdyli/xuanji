@@ -25,3 +25,6 @@ class FeatureFlags(BaseModel):
     # P3-1: opt-in planner→executor→reviewer multi-agent collaboration pipeline.
     # Default off; the single-agent orchestrator path is unchanged when disabled.
     enable_multi_agent_collab: bool = False
+    # 短期#7：简单问答直答旁路（跳过 Crew 编排，单次 LLM 直调）。
+    # 分类器保守（见 agents/direct_answer.py），失败自动回退完整编排。
+    enable_direct_answer_bypass: bool = True

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_export_session(request: web.Request) -> web.StreamResponse:
-    """GET /api/frontend/sessions/{session_id}/export?format=pdf|markdown|docx"""
+    """GET /api/frontend/sessions/{session_id}/export?format=pdf|markdown|docx|pptx|html"""
     # 1. Auth
     if not check_auth(request):
         return web.json_response({"error": "unauthorized"}, status=401)
@@ -23,9 +23,12 @@ async def handle_export_session(request: web.Request) -> web.StreamResponse:
     fmt = request.query.get("format", "markdown")
 
     # 3. Validate format
-    if fmt not in ("markdown", "pdf", "docx"):
+    if fmt not in ("markdown", "pdf", "docx", "pptx", "html"):
         return web.json_response(
-            {"error": f"Unsupported format: {fmt!r}. Use markdown, pdf, or docx."},
+            {
+                "error": f"Unsupported format: {fmt!r}. "
+                "Use markdown, pdf, docx, pptx, or html."
+            },
             status=400,
         )
 
@@ -49,7 +52,11 @@ async def handle_export_session(request: web.Request) -> web.StreamResponse:
     # 5. Stream file back to the client
     response = web.StreamResponse()
     response.headers["Content-Type"] = content_type
-    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    # HTML is meant for in-browser preview; everything else downloads.
+    disposition = "inline" if fmt == "html" else "attachment"
+    response.headers["Content-Disposition"] = (
+        f'{disposition}; filename="{filename}"'
+    )
     response.headers["Content-Length"] = str(len(file_bytes))
     await response.prepare(request)
     await response.write(file_bytes)

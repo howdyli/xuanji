@@ -88,6 +88,19 @@ docker compose -f sandbox-docker-compose.yaml up -d
 curl -s http://localhost:8030/ | head -3   # 返回 JSON 即正常（/healthz 不存在属正常现象）
 ```
 
+**故障排查：容器崩溃循环（`docker ps` 显示 Restarting）**
+
+镜像入口脚本启动时需要 `groupadd/useradd/chown` 并写入 `/etc/sudoers.d/`，compose
+已按最小权限原则 `cap_drop: ALL` 并只回加入口脚本所需的能力集。如果容器仍反复重启：
+
+```bash
+docker compose -f sandbox-docker-compose.yaml logs --tail 50   # 找具体 Permission denied 的操作
+```
+
+- 日志出现 `groupadd: Permission denied` / `chown: Operation not permitted`：镜像更新后入口脚本需要新的能力，在 `sandbox-docker-compose.yaml` 的 `cap_add` 列表补上对应项（如 `FSETID`）。
+- 日志出现 `sudo: unable to ...`：`no-new-privileges` 与镜像内 sudo 提权冲突，可临时注释 `security_opt` 该行定位问题。
+- 镜像已通过 digest 固定版本；升级镜像时先在本地验证入口脚本兼容后再更新 digest。
+
 **重要：workspace 目录权限**
 
 沙箱内的 MCP 服务以 `gem` 用户运行，需要能直接写入 `/workspace/`（即宿主机的 `./data/workspace`）。

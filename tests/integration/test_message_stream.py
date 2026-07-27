@@ -79,6 +79,8 @@ def app(reply_text):
     session.message_count = 0
     session_mgr = AsyncMock()
     session_mgr.get_or_create.return_value = session
+    # 新语义：不带 session_id 的请求会建新会话
+    session_mgr.create_new_session.return_value = session
 
     application["sender"] = sender
     application["session_mgr"] = session_mgr

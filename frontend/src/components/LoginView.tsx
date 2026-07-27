@@ -92,7 +92,7 @@ export function LoginView({ theme = {}, onLogin }: {
       })
       if (!res.ok) {
         const data = await res.json().catch(() => null)
-        setGlobalError(data?.detail || '邮箱或密码不正确，请重试。')
+        setGlobalError(data?.error || data?.detail || '邮箱或密码不正确，请重试。')
         return
       }
       const data = await res.json()

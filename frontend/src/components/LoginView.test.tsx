@@ -15,7 +15,7 @@ describe('LoginView', () => {
   function fillCredentials(user: ReturnType<typeof userEvent.setup>) {
     return (async () => {
       await user.type(
-        screen.getByPlaceholderText('请输入账号或邮箱地址'),
+        screen.getByPlaceholderText('name@xuanji.ai'),
         'alice',
       )
       await user.type(screen.getByPlaceholderText('请输入密码'), 'secret')
@@ -27,9 +27,9 @@ describe('LoginView', () => {
     const onLogin = vi.fn()
     render(<LoginView onLogin={onLogin} />)
 
-    await user.click(screen.getByRole('button', { name: /登录账户/ }))
+    await user.click(screen.getByRole('button', { name: '登录' }))
 
-    expect(screen.getByText('请输入用户名或邮箱')).toBeInTheDocument()
+    expect(screen.getByText('请输入邮箱或账号')).toBeInTheDocument()
     expect(screen.getByText('请输入密码')).toBeInTheDocument()
     expect(fetch).not.toHaveBeenCalled()
     expect(onLogin).not.toHaveBeenCalled()
@@ -46,7 +46,7 @@ describe('LoginView', () => {
     render(<LoginView onLogin={onLogin} />)
 
     await fillCredentials(user)
-    await user.click(screen.getByRole('button', { name: /登录账户/ }))
+    await user.click(screen.getByRole('button', { name: '登录' }))
 
     await waitFor(() => expect(onLogin).toHaveBeenCalledWith('tok-123', fakeUser))
     expect(fetch).toHaveBeenCalledWith(
@@ -63,12 +63,12 @@ describe('LoginView', () => {
     const onLogin = vi.fn()
     ;(fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: false,
-      json: async () => ({ detail: '账号已被锁定' }),
+      json: async () => ({ error: '账号已被锁定' }),
     })
     render(<LoginView onLogin={onLogin} />)
 
     await fillCredentials(user)
-    await user.click(screen.getByRole('button', { name: /登录账户/ }))
+    await user.click(screen.getByRole('button', { name: '登录' }))
 
     expect(await screen.findByText('账号已被锁定')).toBeInTheDocument()
     expect(onLogin).not.toHaveBeenCalled()
@@ -81,7 +81,7 @@ describe('LoginView', () => {
     render(<LoginView onLogin={onLogin} />)
 
     await fillCredentials(user)
-    await user.click(screen.getByRole('button', { name: /登录账户/ }))
+    await user.click(screen.getByRole('button', { name: '登录' }))
 
     expect(
       await screen.findByText('登录失败，请检查网络后重试。'),

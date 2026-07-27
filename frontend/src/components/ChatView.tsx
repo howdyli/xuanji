@@ -8,9 +8,11 @@ import { LoadingStates, ErrorDisplay } from './UXComponents'
 // --- Session Context Bar (shown above messages in chat mode) ---
 function SessionContextBar({
   title,
+  running,
   onOpenDrawer,
 }: {
   title: string
+  running: boolean
   onOpenDrawer: () => void
 }) {
   return (
@@ -19,9 +21,15 @@ function SessionContextBar({
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 3h8v7H2z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/><path d="M4 1v2M8 1v2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
         {title || '新任务'}
       </span>
-      <span className="text-[10px] text-[#2d9e6b] flex items-center gap-1">
-        <span className="w-[5px] h-[5px] bg-[#2d9e6b] rounded-full" />进行中
-      </span>
+      {running ? (
+        <span className="text-[10px] text-[#2d9e6b] flex items-center gap-1">
+          <span className="w-[5px] h-[5px] bg-[#2d9e6b] rounded-full" />进行中
+        </span>
+      ) : (
+        <span className="text-[10px] text-[#8a8884] flex items-center gap-1">
+          <span className="w-[5px] h-[5px] bg-[#8a8884] rounded-full" />已完成
+        </span>
+      )}
       <button
         onClick={onOpenDrawer}
         className="ml-auto text-[10px] flex items-center gap-1 px-2 py-0.5 rounded-full hover:opacity-80 transition-colors"
@@ -247,7 +255,7 @@ export function ChatMessages({
 
   return (
     <>
-      <SessionContextBar title={sessionTitle} onOpenDrawer={onOpenDrawer} />
+      <SessionContextBar title={sessionTitle} running={loading} onOpenDrawer={onOpenDrawer} />
       <SummaryBanner messages={messages} />
 
       {/* AgentTimeline 实时模式：loading 期间显示多 Agent 协作过程 */}

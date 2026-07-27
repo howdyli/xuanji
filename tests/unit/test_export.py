@@ -146,20 +146,42 @@ class TestDocxRenderer:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+_WEASYPRINT_SKIP_REASON = (
+    "weasyprint 不可用（Python 包缺失或原生库 libgobject/pango 加载失败）。"
+    "安装指引: pip install weasyprint；系统库: macOS "
+    "`brew install pango gdk-pixbuf libffi`; Debian/Ubuntu "
+    "`apt-get install libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0`"
+)
+
+
+def _require_weasyprint() -> None:
+    """weasyprint 不可用时 skip（importorskip 捕不到原生库 OSError）。"""
+    from xiaopaw.export import pdf_renderer
+    if pdf_renderer.weasyprint is None:
+        pytest.skip(_WEASYPRINT_SKIP_REASON)
+
+
+def _render_pdf_or_skip(md: str) -> bytes:
+    """渲染 PDF；weasyprint 原生库运行期加载失败时 skip 并给出安装指引。"""
+    _require_weasyprint()
+    try:
+        return render_markdown_to_pdf(md)
+    except OSError:
+        pytest.skip(_WEASYPRINT_SKIP_REASON)
+
+
 class TestPdfRenderer:
     def test_generates_valid_pdf(self):
         """生成的字节以 %PDF 开头"""
-        pytest.importorskip("weasyprint")
         md = "# Hello\n\nTest content."
-        result = render_markdown_to_pdf(md)
+        result = _render_pdf_or_skip(md)
         assert isinstance(result, bytes)
         assert result[:4] == b"%PDF"
 
     def test_handles_chinese_content(self):
         """中文内容不报错"""
-        pytest.importorskip("weasyprint")
         md = "# 中文测试\n\n这是一段中文内容。"
-        result = render_markdown_to_pdf(md)
+        result = _render_pdf_or_skip(md)
         assert isinstance(result, bytes)
         assert result[:4] == b"%PDF"
 
@@ -238,11 +260,14 @@ class TestExportService:
     @pytest.mark.asyncio
     async def test_export_pdf(self, mock_session_mgr):
         """PDF 导出返回正确的 content_type"""
-        pytest.importorskip("weasyprint")
+        _require_weasyprint()
         from xiaopaw.export.service import ExportService
 
         svc = ExportService(mock_session_mgr)
-        file_bytes, filename, content_type = await svc.export_session("s-test", "pdf")
+        try:
+            file_bytes, filename, content_type = await svc.export_session("s-test", "pdf")
+        except OSError:
+            pytest.skip(_WEASYPRINT_SKIP_REASON)
 
         assert filename == "s-test.pdf"
         assert content_type == "application/pdf"

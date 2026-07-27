@@ -632,18 +632,19 @@ function GridSkeleton() {
 }
 
 // ─── Featured scenarios ─────────────────────────────────────────────────
-// Theme gradient keys → Tailwind gradient classes (sky-based palette, aligned
-// with the #3898EC brand tone used across sidebar / login).
-const SCENARIO_GRADIENTS: Record<string, string> = {
-  sky: 'from-sky-400 to-blue-500',
-  violet: 'from-violet-400 to-indigo-500',
-  pink: 'from-pink-400 to-rose-500',
-  amber: 'from-amber-400 to-orange-500',
-  orange: 'from-orange-400 to-rose-500',
-  cyan: 'from-cyan-400 to-sky-500',
+// Theme keys → soft pastel tints (50/100 shades) that stay consistent with
+// the light UI shell (white cards, gray borders, #3898EC brand accents).
+// Saturated 400/500 gradients clashed with the main interface tone.
+const SCENARIO_THEMES: Record<string, string> = {
+  sky: 'from-sky-50 to-blue-100/60',
+  violet: 'from-violet-50 to-indigo-100/60',
+  pink: 'from-pink-50 to-rose-100/60',
+  amber: 'from-amber-50 to-orange-100/60',
+  orange: 'from-orange-50 to-rose-100/60',
+  cyan: 'from-cyan-50 to-sky-100/60',
 }
-function scenarioGradient(key: string): string {
-  return SCENARIO_GRADIENTS[key] || SCENARIO_GRADIENTS.sky
+function scenarioTheme(key: string): string {
+  return SCENARIO_THEMES[key] || SCENARIO_THEMES.sky
 }
 
 function ScenarioCard({
@@ -655,12 +656,14 @@ function ScenarioCard({
 }) {
   return (
     <div className="shrink-0 w-[260px] bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-      {/* Themed header */}
-      <div className={`relative px-4 py-3.5 bg-gradient-to-br ${scenarioGradient(scenario.gradient)} text-white`}>
-        <div className="text-2xl leading-none">{ICON_EMOJIS[scenario.icon] || ICON_EMOJIS.expert}</div>
-        <div className="mt-2 text-[15px] font-semibold leading-tight">{scenario.title}</div>
+      {/* Themed header (soft tint, dark text — matches the light UI shell) */}
+      <div className={`relative px-4 py-3.5 bg-gradient-to-br ${scenarioTheme(scenario.gradient)} border-b border-gray-100`}>
+        <div className="w-9 h-9 rounded-lg bg-white/80 shadow-sm flex items-center justify-center text-xl leading-none">
+          {ICON_EMOJIS[scenario.icon] || ICON_EMOJIS.expert}
+        </div>
+        <div className="mt-2 text-[15px] font-semibold leading-tight text-gray-800">{scenario.title}</div>
         {scenario.subtitle && (
-          <div className="mt-0.5 text-[11.5px] text-white/85 leading-snug line-clamp-2">{scenario.subtitle}</div>
+          <div className="mt-0.5 text-[11.5px] text-gray-500 leading-snug line-clamp-2">{scenario.subtitle}</div>
         )}
       </div>
       {/* Recommended experts */}

@@ -666,7 +666,16 @@ export function SkillManagerView() {
         setErr(data?.error || `刷新失败 (${res.status})`)
         fireToast('刷新失败')
       } else {
-        fireToast('已刷新市场索引')
+        const sources: Record<string, { ok?: boolean; error?: string; count?: number }> = data?.sources || {}
+        const entries = Object.entries(sources)
+        const failed = entries.filter(([, v]) => !v?.ok)
+        if (entries.length > 0 && failed.length === entries.length) {
+          // 所有远程源都失败：如实提示，而不是静默展示空市场
+          setErr(`市场数据源不可用：${failed.map(([k, v]) => `${k}（${v?.error || '未知错误'}）`).join('；')}。可通过环境变量 XIAOPAW_VERCEL_SKILLS_INDEX_URL 配置自定义索引源。`)
+          fireToast('刷新失败：远程数据源不可用')
+        } else {
+          fireToast('已刷新市场索引')
+        }
         await loadMarket(search)
       }
     } finally {
@@ -794,7 +803,7 @@ export function SkillManagerView() {
           market.length === 0 ? (
             <EmptyState
               title={search ? '没有匹配的技能' : '市场为空'}
-              hint={search ? '试试其他关键字，或点击右上角刷新。' : '点击右上角「刷新」从远程仓库同步索引。'}
+              hint={search ? '试试其他关键字，或点击右上角刷新。' : '点击右上角「刷新」从远程仓库同步索引；若提示数据源不可用，请检查网络或配置自定义索引源。'}
             />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

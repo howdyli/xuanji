@@ -96,7 +96,12 @@ export function TaskListView({
               </div>
               <div className="list-item-content">
                 <div className="list-item-title">{s.title || '新任务'}</div>
-                <div className="list-item-subtitle">{s.message_count} 条消息</div>
+                <div className="list-item-subtitle">
+                  <span style={{ color: s.status === 'running' ? '#2d9e6b' : 'var(--text-tertiary)' }}>
+                    {s.status === 'running' ? '● 进行中' : '✓ 已完成'}
+                  </span>
+                  {' · '}{s.message_count} 条消息
+                </div>
               </div>
               <div className="list-item-meta">
                 <div className="list-item-time">{formatRelativeTime(s.updated_at)}</div>

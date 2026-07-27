@@ -54,6 +54,7 @@ function App() {
   const [historyLoading, setHistoryLoading] = useState(false)
 
   const [activeNav, setActiveNav] = useState('assistant')
+  const [homeTab, setHomeTab] = useState<'all' | 'running' | 'done'>('all')
   const [search, setSearch] = useState('')
   // 每会话专家：sessionExperts 按会话 id 持久化；pendingExpert 暂存尚未建会话（首页/新任务）时选中的专家。
   const [sessionExperts, setSessionExperts] = useState<Record<string, string>>(() => {
@@ -375,7 +376,7 @@ function App() {
 
   // Export session handler
   const [exportingSessionId, setExportingSessionId] = useState<string | null>(null)
-  const handleExport = useCallback(async (sessionId: string, format: 'pdf' | 'markdown' | 'docx') => {
+  const handleExport = useCallback(async (sessionId: string, format: 'pdf' | 'markdown' | 'docx' | 'pptx' | 'html') => {
     try {
       setExportingSessionId(sessionId)
       const response = await rawFetch(
@@ -383,6 +384,12 @@ function App() {
       )
       const blob = await response.blob()
       const url = URL.createObjectURL(blob)
+      if (format === 'html') {
+        // HTML 报告在新标签页中预览，而非直接下载
+        window.open(url, '_blank')
+        setTimeout(() => URL.revokeObjectURL(url), 60_000)
+        return
+      }
       const a = document.createElement('a')
       a.href = url
       a.download = `${sessionId}.${format === 'markdown' ? 'md' : format}`
@@ -489,7 +496,7 @@ function App() {
 
       {/* Main */}
       <main className="flex-1 flex flex-col min-w-0">
-        <DashboardTopBar onOpenDrawer={() => setDrawerOpen(true)} isHome={messages.length === 0 && !historyLoading && activeNav === 'assistant'} activeNav={activeNav} username={currentUser.username} onSearchClick={() => setActiveNav('connector')} authToken={authToken} />
+        <DashboardTopBar onOpenDrawer={() => setDrawerOpen(true)} isHome={messages.length === 0 && !historyLoading && activeNav === 'assistant'} activeNav={activeNav} username={currentUser.username} onSearchClick={() => setActiveNav('connector')} authToken={authToken} homeTab={homeTab} onHomeTabChange={setHomeTab} />
         {activeNav === 'workspace' ? (
           <div className="flex-1 flex flex-col min-h-0 view-enter">
             <WorkspaceView />
@@ -556,7 +563,7 @@ function App() {
         ) : messages.length === 0 && !historyLoading ? (
           /* ── Unified Workspace: Home state ── */
           <div className="flex-1 flex flex-col min-h-0 view-enter">
-            <DashboardHome onSend={handleSend} loading={loading} username={currentUser.username} sessions={sessions} onSessionSelect={(id) => { handleSelectSession(id); if (window.innerWidth < 1024) setSidebarVisible(false) }} onViewAllSessions={() => setActiveNav('chat')} inputSlot={<UnifiedInputBar isHome={true} loading={loading} onSend={handleSend} sessionId={activeSessionId} inputRef={inputRef} embedded activeExpert={effectiveExpert} onSelectExpert={selectExpert} />} />
+            <DashboardHome onSend={handleSend} loading={loading} username={currentUser.username} sessions={homeTab === 'all' ? sessions : sessions.filter((s) => homeTab === 'running' ? s.status === 'running' : s.status !== 'running')} onSessionSelect={(id) => { handleSelectSession(id); if (window.innerWidth < 1024) setSidebarVisible(false) }} onViewAllSessions={() => setActiveNav('chat')} inputSlot={<UnifiedInputBar isHome={true} loading={loading} onSend={handleSend} sessionId={activeSessionId} inputRef={inputRef} embedded activeExpert={effectiveExpert} onSelectExpert={selectExpert} />} />
           </div>
         ) : messages.length === 0 && historyLoading ? (
           <div className="flex-1 flex items-center justify-center view-enter">

@@ -1,5 +1,5 @@
 -- 玄机 pgvector schema
--- Requires: CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS memories (
     id              TEXT PRIMARY KEY,
@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     routing_key   TEXT NOT NULL,
     title         TEXT NOT NULL DEFAULT '',
     message_count INT NOT NULL DEFAULT 0,
+    status        TEXT NOT NULL DEFAULT 'completed',
     team_id       INTEGER,
     shared_by     TEXT NOT NULL DEFAULT '',
     share_permission TEXT NOT NULL DEFAULT 'view',

@@ -66,6 +66,8 @@ def app(pg_store, runner_ref):
     session.message_count = 0
     session_mgr = AsyncMock()
     session_mgr.get_or_create.return_value = session
+    # 新语义：不带 session_id 的请求会建新会话
+    session_mgr.create_new_session.return_value = session
 
     runner = _FakeRunner(sender)
     runner_ref["runner"] = runner

@@ -103,6 +103,11 @@ class FeishuSender:
                         delay = self._backoff[min(attempt, len(self._backoff) - 1)]
                         await asyncio.sleep(delay)
                         continue
+                    # 重试耗尽仍被限流：显式抛错，避免静默返回空 message_id
+                    raise RuntimeError(
+                        f"feishu rate limited (code={response.code}) "
+                        f"after {self._max_retries} attempts"
+                    )
                 if not response.success():
                     logger.warning("feishu send error: code=%d msg=%s", response.code, response.msg)
                 return response.data.message_id if response.data else ""

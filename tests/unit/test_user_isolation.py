@@ -87,6 +87,7 @@ class TestSessionRoutingKey:
         mock_session.id = "test-session-id"
         mock_session_mgr = AsyncMock()
         mock_session_mgr.get_or_create.return_value = mock_session
+        mock_session_mgr.create_new_session.return_value = mock_session
 
         # Mock runner
         mock_runner = AsyncMock()
@@ -102,9 +103,12 @@ class TestSessionRoutingKey:
         # Call handle_message
         result = await handle_message(request)
 
-        # Verify session_mgr.get_or_create was called with the routing_key from auth user
+        # No session_id in the body -> a fresh session must be created with the
+        # routing_key from the auth user (the previous active session is only
+        # resumed when the client explicitly passes session_id).
         expected_routing_key = get_routing_key_from_request(request)
-        mock_session_mgr.get_or_create.assert_called_once_with(expected_routing_key)
+        mock_session_mgr.create_new_session.assert_called_once_with(expected_routing_key)
+        mock_session_mgr.get_or_create.assert_not_called()
 
         # Verify runner.dispatch was called
         mock_runner.dispatch.assert_called_once()

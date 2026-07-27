@@ -83,6 +83,7 @@ class PGStore:
         title: str = "",
         message_count: int = 0,
         org_id: int | None = None,
+        status: str = "completed",
     ) -> None:
         """Upsert a session record."""
         if not self._ensure_connection():
@@ -92,13 +93,14 @@ class PGStore:
             def _execute():
                 with self._conn.cursor() as cur:
                     cur.execute(
-                        """INSERT INTO sessions (id, routing_key, title, message_count, org_id, updated_at)
-                           VALUES (%s, %s, %s, %s, %s, NOW())
+                        """INSERT INTO sessions (id, routing_key, title, message_count, org_id, status, updated_at)
+                           VALUES (%s, %s, %s, %s, %s, %s, NOW())
                            ON CONFLICT (id) DO UPDATE SET
                                message_count = EXCLUDED.message_count,
                                org_id = COALESCE(sessions.org_id, EXCLUDED.org_id),
+                               status = EXCLUDED.status,
                                updated_at = NOW()""",
-                        (session_id, routing_key, title, message_count, org_id),
+                        (session_id, routing_key, title, message_count, org_id, status),
                     )
                 self._conn.commit()
             await asyncio.to_thread(_execute)
@@ -321,3 +323,100 @@ class JSONLStore:
         path = session_dir / f"{msg_id}.json"
         import asyncio
         await asyncio.to_thread(path.write_text, json.dumps(entry, ensure_ascii=False), encoding="utf-8")
+
+
+def migrate_jsonl_sessions(pg_store: PGStore, session_mgr) -> tuple[int, int]:
+    """One-shot, idempotent JSONL -> PostgreSQL session migration.
+
+    The frontend serves the sessions list PG-first, so sessions created
+    before PostgreSQL was enabled (JSONL only) silently disappear from the
+    UI once PG comes online. This copies every indexed session missing from
+    the ``sessions`` table -- together with its JSONL message history --
+    into PG. Existing rows are never touched (ON CONFLICT DO NOTHING), so
+    running it on every startup is safe.
+
+    Returns ``(migrated_sessions, migrated_messages)``.
+    """
+    if not pg_store or not pg_store._ensure_connection():
+        return 0, 0
+
+    sessions_dir = session_mgr._sessions_dir
+    migrated_sessions = 0
+    migrated_messages = 0
+    try:
+        import psycopg2
+        with pg_store._conn.cursor() as cur:
+            # Lightweight in-place upgrade for databases created before the
+            # task-status column existed (schema.sql ships it for new ones).
+            cur.execute(
+                "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS "
+                "status TEXT NOT NULL DEFAULT 'completed'"
+            )
+            cur.execute("SELECT id FROM sessions")
+            existing = {row[0] for row in cur.fetchall()}
+
+            for s in session_mgr.list_all_sessions():
+                if s["id"] in existing:
+                    continue
+                jsonl_path = sessions_dir / f"{s['id']}.jsonl"
+                if not jsonl_path.exists() and not s.get("message_count"):
+                    continue  # empty draft session, nothing to migrate
+
+                cur.execute(
+                    """INSERT INTO sessions
+                           (id, routing_key, title, message_count, created_at, updated_at)
+                       VALUES (%s, %s, %s, %s,
+                               COALESCE(%s::timestamptz, NOW()),
+                               COALESCE(%s::timestamptz, NOW()))
+                       ON CONFLICT (id) DO NOTHING""",
+                    (
+                        s["id"], s["routing_key"], s.get("title") or "",
+                        s.get("message_count") or 0,
+                        s.get("updated_at") or None, s.get("updated_at") or None,
+                    ),
+                )
+                migrated_sessions += cur.rowcount
+
+                if not jsonl_path.exists():
+                    continue
+                for idx, line in enumerate(
+                    jsonl_path.read_text(encoding="utf-8").splitlines()
+                ):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    if "role" not in entry:
+                        continue
+                    # +idx ms keeps intra-session ordering stable: user and
+                    # assistant entries of one turn share the same ts, and
+                    # fetch_conversations orders by created_at only.
+                    ts = entry.get("ts") or 0
+                    cur.execute(
+                        """INSERT INTO conversations
+                               (id, session_id, routing_key, role, content, created_at)
+                           VALUES (%s, %s, %s, %s, %s,
+                                   COALESCE(to_timestamp(%s / 1000.0), NOW()))
+                           ON CONFLICT (id) DO NOTHING""",
+                        (
+                            f"{s['id']}_jsonl_{idx:04d}", s["id"],
+                            s["routing_key"], entry.get("role", ""),
+                            entry.get("content", ""),
+                            (ts + idx) if ts else None,
+                        ),
+                    )
+                    migrated_messages += cur.rowcount
+        pg_store._conn.commit()
+    except psycopg2.Error as exc:
+        pg_store._conn.rollback()
+        logger.warning("PGStore: JSONL session migration failed: %s", exc)
+        return migrated_sessions, migrated_messages
+    if migrated_sessions or migrated_messages:
+        logger.info(
+            "PGStore: migrated %d JSONL sessions (%d messages) into PostgreSQL",
+            migrated_sessions, migrated_messages,
+        )
+    return migrated_sessions, migrated_messages

@@ -41,6 +41,13 @@ class SandboxConfig(BaseModel):
 
     url: str = "http://localhost:8030/mcp"
     timeout_s: int = Field(default=120, ge=10, le=600)
+    # 短期#9：会话级沙箱隔离（实验性）。开启后每个会话独占一个沙箱容器，
+    # 需要本机 docker 与 AIO-Sandbox 镜像；任何失败自动回退共享沙箱。
+    per_session: bool = False
+    image: str = "ghcr.io/agent-infra/sandbox:latest"
+    pool_port_start: int = Field(default=8100, ge=1024, le=65000)
+    pool_max_containers: int = Field(default=5, ge=1, le=32)
+    pool_idle_ttl_s: int = Field(default=1800, ge=60)
 
 
 class MemoryConfig(BaseModel):
