@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,7 @@ from xiaopaw.memory.context_mgmt import (
     save_session_ctx_async,
 )
 from xiaopaw.memory.indexer import async_index_turn
+from xiaopaw.memory.remote_memory import remote_memory_store
 from xiaopaw.models import SenderProtocol
 from xiaopaw.session.models import MessageEntry
 from xiaopaw.tools.intermediate_tool import IntermediateTool
@@ -170,6 +171,8 @@ class MemoryAwareCrew:
         flags: FeatureFlags | None = None,
         skill_registry: Any | None = None,
         user_skills_dir: Path | None = None,
+        recalled_memory: str = "",
+        user_preferences: dict | None = None,
         verbose: bool = False,
     ) -> None:
         self.session_id = session_id
@@ -185,6 +188,8 @@ class MemoryAwareCrew:
         self._flags = flags or FeatureFlags()
         self._skill_registry = skill_registry
         self._user_skills_dir = user_skills_dir
+        self._recalled_memory = recalled_memory
+        self._user_preferences = user_preferences or {}
         self._verbose = verbose
 
         self._step_callback = _make_step_callback(sender, routing_key)
@@ -194,7 +199,7 @@ class MemoryAwareCrew:
         self._history_len = 0
         self._turn_start_ts = int(time.time() * 1000)
 
-        self._index_coroutine: Coroutine | None = None
+        self._index_tasks: set[asyncio.Task] = set()
         self._role_label_map_cache: dict[str, str] | None = None
 
     @agent
@@ -204,6 +209,25 @@ class MemoryAwareCrew:
         )
         cfg = agents_cfg["orchestrator"]
         cfg["backstory"] = build_bootstrap_prompt(self._workspace_dir)
+        # 远程长期记忆召回注入：拼在 bootstrap prompt 之后（空召回零污染）
+        if self._recalled_memory:
+            cfg["backstory"] += (
+                "\n\n<long_term_memory>\n"
+                "以下为长期记忆召回内容，供参考，可能过时：\n"
+                f"{self._recalled_memory}\n"
+                "</long_term_memory>"
+            )
+        # Phase 4 FR-1：已存用户偏好键值注入（上限 20 条在读取侧控制）
+        if self._user_preferences:
+            pref_lines = "\n".join(
+                f"- {k}: {v}" for k, v in self._user_preferences.items()
+            )
+            cfg["backstory"] += (
+                "\n\n<user_preferences>\n"
+                "用户已保存的持久偏好（回复时应遵循）：\n"
+                f"{pref_lines}\n"
+                "</user_preferences>"
+            )
 
         from xiaopaw.tools.skill_loader import SkillLoaderTool
 
@@ -251,9 +275,27 @@ class MemoryAwareCrew:
                 f"（当前会话已绑定 {len(allowed_kb_ids)} 个知识库，检索将限定在绑定范围内。）"
             )
 
+        tools = [skill_tool, IntermediateTool(), knowledge_tool]
+        # Phase 4 FR-1：远程记忆启用时才挂载偏好保存工具（避免模型
+        # 在功能关闭时调用得到"未启用"废回答）
+        if getattr(self._flags, "enable_remote_memory", False):
+            from xiaopaw.tools.save_preference_tool import SaveUserPreferenceTool
+
+            tools.append(SaveUserPreferenceTool())
+
+            # Phase 5 FR-3/FR-4：结构化记忆表工具（双 flag 门控灰度）
+            if getattr(self._flags, "enable_structured_tables", False):
+                from xiaopaw.tools.structured_record_tools import (
+                    QueryStructuredRecordsTool,
+                    SaveStructuredRecordTool,
+                )
+
+                tools.append(SaveStructuredRecordTool())
+                tools.append(QueryStructuredRecordsTool())
+
         return Agent(
             **cfg,
-            tools=[skill_tool, IntermediateTool(), knowledge_tool],
+            tools=tools,
             # ✅ P2-1: 使用 ModelRouter 自动选择最优模型（支持多模型路由）
             llm=model_router.get_llm(task_type="orchestrator"),
             verbose=self._verbose,
@@ -445,14 +487,31 @@ class MemoryAwareCrew:
             except Exception:
                 reply = str(result.raw) if result.raw else str(result)
 
-            if self._db_dsn:
-                self._index_coroutine = async_index_turn(
+            if self._db_dsn and getattr(self._flags, "enable_pgvector_indexing", True):
+                # Phase 4 FR-5：修复存量 bug —— 旧代码把 coroutine 赋给
+                # self._index_coroutine 但从未调度（never awaited），pgvector
+                # 写入实际从未执行。现改为 create_task 真正后台执行，并受
+                # enable_pgvector_indexing 开关控制（双写观察期后置 false 下线）。
+                index_task = asyncio.get_running_loop().create_task(
+                    async_index_turn(
+                        session_id=self.session_id,
+                        routing_key=self.routing_key,
+                        user_message=self.user_message,
+                        assistant_reply=reply,
+                        turn_ts=self._turn_start_ts,
+                        db_dsn=self._db_dsn,
+                    )
+                )
+                self._index_tasks.add(index_task)
+                index_task.add_done_callback(self._index_tasks.discard)
+
+            # 远程长期记忆双写（fire-and-forget，与 pgvector 索引互不影响）
+            if getattr(self._flags, "enable_remote_memory", False):
+                remote_memory_store.save_turn_background(
                     session_id=self.session_id,
                     routing_key=self.routing_key,
                     user_message=self.user_message,
                     assistant_reply=reply,
-                    turn_ts=self._turn_start_ts,
-                    db_dsn=self._db_dsn,
                 )
 
             return reply, used_skills
@@ -511,6 +570,23 @@ def build_agent_fn(
         if sandbox_pool is not None:
             turn_sandbox_url = await sandbox_pool.acquire(session_id)
 
+        # 远程长期记忆召回预取（async 环境，避免在同步 hook 内跑事件循环）；
+        # 失败/超时返回空串，不阻断对话
+        recalled_memory = ""
+        user_preferences: dict = {}
+        if (
+            flags is not None
+            and getattr(flags, "enable_remote_memory", False)
+            and remote_memory_store.is_enabled
+        ):
+            recalled_memory = await remote_memory_store.recall(
+                query=user_message, routing_key=routing_key
+            )
+            # Phase 4 FR-1：已存偏好合并读取（失败返回空 dict 不阻断）
+            user_preferences = await remote_memory_store.get_preferences(
+                routing_key=routing_key
+            )
+
         crew_instance = MemoryAwareCrew(
             session_id=session_id,
             routing_key=routing_key,
@@ -525,6 +601,8 @@ def build_agent_fn(
             flags=flags,
             skill_registry=skill_registry,
             user_skills_dir=user_skills_dir,
+            recalled_memory=recalled_memory,
+            user_preferences=user_preferences,
             verbose=verbose,
         )
         return await crew_instance.run_and_index()

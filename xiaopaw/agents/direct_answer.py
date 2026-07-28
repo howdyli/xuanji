@@ -40,6 +40,11 @@ _TASK_KEYWORDS = (
     "定时", "提醒", "日程", "每天", "每周", "cron",
     # 记忆与技能
     "记住", "记忆", "备忘", "技能", "skill",
+    # 偏好表达（Phase 4 偏好工具：持久性陈述需要 save_user_preference）
+    "以后", "叫我", "别忘了", "我喜欢", "我不喜欢", "偏好", "习惯",
+    # 结构化记录（Phase 5 记忆表：待办/开销类请求需要工具）
+    "记一下", "记个", "记录", "待办", "开销", "花了", "记账",
+    "建一个", "建个", "存进", "存到", "存一下",
     # 生成类（图片/代码工程通常要走工具或专用模型）
     "生成", "制作", "画一", "绘制", "写一份", "写个", "帮我做",
 )
@@ -48,6 +53,7 @@ _TASK_KEYWORDS = (
 _SYSTEM_PROMPT = (
     "你是「玄机」AI 工作助手。当前处于快速问答模式：直接、简洁地回答用户的"
     "问题，不要声称你已执行了搜索、文件操作等动作（此模式下没有工具可用）。"
+    "严禁声称已保存/已创建/已记录任何内容——你没有任何写入能力。"
     "如果问题需要联网检索、操作文件或执行任务才能可靠回答，请如实说明并建议"
     "用户补充明确的任务指令。用中文回答。"
 )
@@ -89,10 +95,29 @@ def build_direct_answer_fn(max_history_turns: int = 10):
         verbose: bool = False,
     ) -> tuple[str, list[str]]:
         from xiaopaw.llm.model_router import model_router
+        from xiaopaw.memory.remote_memory import remote_memory_store
 
         llm = model_router.get_llm(task_type="general_chat")
 
-        messages: list[dict] = [{"role": "system", "content": _SYSTEM_PROMPT}]
+        # 旁路同样注入远程记忆（偏好 + 长期召回），否则“关于我”类问题
+        # 会因缺上下文答不上；失败/超时降级为无记忆，不阻断直答。
+        system_prompt = _SYSTEM_PROMPT
+        if remote_memory_store.is_enabled:
+            recalled = await remote_memory_store.recall(
+                query=user_message, routing_key=routing_key
+            )
+            prefs = await remote_memory_store.get_preferences(routing_key=routing_key)
+            if prefs:
+                pref_lines = "\n".join(f"- {k}: {v}" for k, v in prefs.items())
+                system_prompt += (
+                    "\n\n<user_preferences>\n" + pref_lines + "\n</user_preferences>"
+                )
+            if recalled:
+                system_prompt += (
+                    "\n\n<long_term_memory>\n" + recalled + "\n</long_term_memory>"
+                )
+
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
         for entry in history[-max_history_turns:]:
             role = entry.role if entry.role in ("user", "assistant") else "user"
             messages.append({"role": role, "content": entry.content})
@@ -106,6 +131,16 @@ def build_direct_answer_fn(max_history_turns: int = 10):
             session_id[:12], getattr(llm, "model", "?"),
             time.monotonic() - start,
         )
-        return (reply or "").strip(), []
+        reply = (reply or "").strip()
+        # 旁路轮次同样落长期记忆（fire-and-forget，与 main_crew 一致），
+        # 否则简单对话中的重要事实（如过敏、称呼）会随会话丢失
+        if remote_memory_store.is_enabled and reply:
+            remote_memory_store.save_turn_background(
+                session_id=session_id,
+                routing_key=routing_key,
+                user_message=user_message,
+                assistant_reply=reply,
+            )
+        return reply, []
 
     return direct_answer_fn

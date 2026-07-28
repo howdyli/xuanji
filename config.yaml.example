@@ -28,6 +28,28 @@ memory:
   max_save_length: 2000
   compress_threshold: 0.45
   context_window_tokens: 32000
+  # 远程长期记忆（agent-memory-system）：需同时开启 feature_flags.enable_remote_memory
+  remote_base_url: "${AGENT_MEMORY_URL:-}"     # 如 http://localhost:8000/api/v1（必须含 /api/v1）
+  remote_api_key: "${AGENT_MEMORY_API_KEY:-}"  # 记忆系统 API Key（amk_xxx）
+  remote_timeout: 10.0
+  recall_top_k: 5
+  recall_max_chars: 4000
+  # Phase 4 片段生命周期治理与摘要化写入
+  fragment_ttl_days: 90     # 普通对话片段 TTL（天），0 = 永久保存
+  importance_default: 0.4   # 普通片段 importance 分
+  importance_high: 0.7      # 含显式陈述（记住/我是/以后…）的片段分
+  summary_timeout: 5.0      # LLM 一句话摘要超时（秒），失败回退原文拼接
+  # Phase 5 结构化记忆表白名单（需同时开启 feature_flags.enable_structured_tables）。
+  # 不配置时使用内置默认：todo(title/due_date/status)、expense(item/amount/date)。
+  # structured_tables:
+  #   todo:
+  #     - {name: title, type: TEXT}
+  #     - {name: due_date, type: TEXT}
+  #     - {name: status, type: TEXT}
+  #   expense:
+  #     - {name: item, type: TEXT}
+  #     - {name: amount, type: REAL}
+  #     - {name: date, type: TEXT}
 
 session:
   max_active_sessions: 1000
@@ -99,3 +121,5 @@ feature_flags:
   enable_webhook_replay_cache: true
   enable_inbound_rate_limit: true
   enable_multi_agent_collab: false  # P3-1: 开启后走 规划→执行→审查 三角色管线
+  enable_remote_memory: false  # 远程长期记忆（agent-memory-system SDK 对接，需配置 memory.remote_*）
+  enable_structured_tables: false  # Phase 5: 结构化记忆表工具（需同时开启 enable_remote_memory）

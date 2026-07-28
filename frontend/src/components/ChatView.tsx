@@ -4,6 +4,7 @@ import type { Message } from '../types'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import AgentTimeline from './AgentTimeline'
 import { LoadingStates, ErrorDisplay } from './UXComponents'
+import { downloadFile } from '../api/client'
 
 // --- Session Context Bar (shown above messages in chat mode) ---
 function SessionContextBar({
@@ -83,15 +84,17 @@ function renderContent(content: string): React.ReactNode {
   }
   return parts.map((part, i) => {
     if (part.startsWith('/workspace/')) {
-      const downloadUrl = `/api/frontend/files/download?path=${encodeURIComponent(part)}`;
       const filename = part.split('/').pop() || part;
+      // 裸 <a href> 不携带 Authorization 头会被 401 拒绝，改用 downloadFile 下载
       return (
         <a
           key={i}
-          href={downloadUrl}
+          href="#"
           className="text-blue-600 underline hover:text-blue-800"
-          target="_blank"
-          rel="noopener noreferrer"
+          onClick={e => {
+            e.preventDefault();
+            downloadFile(part, filename).catch(err => console.error('chat file download failed:', err));
+          }}
         >
           {filename}
         </a>

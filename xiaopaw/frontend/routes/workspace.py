@@ -113,6 +113,15 @@ async def handle_file_download(request: web.Request) -> web.Response:
         logger.warning("frontend: path traversal blocked: %s -> %s", raw_path, resolved)
         return web.json_response({"error": "invalid path"}, status=400)
 
+    # 用户级工作空间未命中时回退到全局工作空间（资料库任务成果位于全局 sessions/ 目录）
+    if not resolved.is_file():
+        workspace_dir = request.app.get("workspace_dir", "")
+        if workspace_dir:
+            base = Path(workspace_dir).resolve()
+            fallback = (base / relative).resolve()
+            if (str(fallback).startswith(str(base) + os.sep) or fallback == base) and fallback.is_file():
+                resolved = fallback
+
     if not resolved.is_file():
         return web.json_response({"error": "file not found"}, status=404)
 

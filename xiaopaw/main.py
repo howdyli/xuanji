@@ -249,6 +249,10 @@ async def main() -> None:
     # Surface silently-disabled features (e.g. no PG DSN) with a loud warning.
     _log_degraded_features(cfg)
 
+    # 远程长期记忆（agent-memory-system SDK）：flag 关闭或配置缺失时保持禁用
+    from xiaopaw.memory.remote_memory import remote_memory_store
+    remote_memory_store.init_from_config(cfg.memory, cfg.feature_flags)
+
     # Pre-warm CrewAI storage directory to prevent "unable to open database file"
     # in sub-threads (ThreadPoolExecutor) where CWD may differ.
     _prewarm_crewai_storage()
@@ -643,6 +647,7 @@ async def main() -> None:
         except asyncio.CancelledError:
             pass
     await runner.shutdown()
+    await remote_memory_store.close()
     if test_api_runner:
         await test_api_runner.cleanup()
     if frontend_runner:

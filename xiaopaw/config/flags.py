@@ -28,3 +28,14 @@ class FeatureFlags(BaseModel):
     # 短期#7：简单问答直答旁路（跳过 Crew 编排，单次 LLM 直调）。
     # 分类器保守（见 agents/direct_answer.py），失败自动回退完整编排。
     enable_direct_answer_bypass: bool = True
+    # 远程长期记忆（agent-memory-system SDK 对接）。开启后每轮对话双写
+    # 记忆片段到记忆服务，并在推理前召回注入长期记忆上下文。
+    # 默认关闭；关闭时行为与现状完全一致（仅 pgvector 索引路径）。
+    enable_remote_memory: bool = False
+    # Phase 4 FR-5：pgvector 旧索引路径下线开关。双写观察期内保持
+    # true（修复后的调度生效）；观察期结束后置 false 切断写入，
+    # 一个版本周期无回退诉求后物理删除旧代码。
+    enable_pgvector_indexing: bool = True
+    # Phase 5：结构化记忆表（Tables）工具。需同时开启
+    # enable_remote_memory；默认关闭，灰度验证 AC 后再默认开启。
+    enable_structured_tables: bool = False

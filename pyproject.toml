@@ -40,6 +40,11 @@ export = [
     "python-pptx>=1.0",
     "markdown>=3.5",
 ]
+# 远程长期记忆（agent-memory-system）对接；本地开发安装：
+#   pip install -e ../pm/agent-memory-system/sdk-python
+remote-memory = [
+    "agent-memory-sdk>=0.1.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",

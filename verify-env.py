@@ -174,6 +174,30 @@ def test_deepseek_api_key(api_key):
         return False, f"测试失败: {str(e)}"
 
 
+def test_agent_memory_service(base_url, api_key):
+    """探测远程记忆服务（agent-memory-system）是否可达"""
+    try:
+        import urllib.request
+        import urllib.error
+
+        # base_url 形如 http://localhost:8000/api/v1，health 端点在服务根路径
+        root = base_url.split("/api/")[0].rstrip("/")
+        req = urllib.request.Request(f"{root}/health", method='GET')
+        if api_key:
+            req.add_header("Authorization", f"Bearer {api_key}")
+        with urllib.request.urlopen(req, timeout=5) as response:
+            if response.status < 400:
+                return True, f"✅ 记忆服务可达: {root}"
+        return False, f"❌ 记忆服务响应异常: {response.status}"
+    except urllib.error.HTTPError as e:
+        # 404 也说明服务在线（只是无 /health 端点）
+        if e.code in (401, 404):
+            return True, f"✅ 记忆服务在线（HTTP {e.code}）"
+        return False, f"❌ HTTP 错误: {e.code} {e.reason}"
+    except Exception as e:
+        return False, f"❌ 无法连接记忆服务: {e}"
+
+
 def main(verbose=False, check_api=False):
     """主函数"""
     
@@ -259,23 +283,42 @@ def main(verbose=False, check_api=False):
     other_vars = {
         "XIAOPAW_ENV": ("运行环境", lambda v: v in ['dev', 'production']),
         "MEMORY_DB_DSN": ("pgvector DSN", lambda v: v is not None),
+        "AGENT_MEMORY_URL": ("远程记忆服务地址", lambda v: v is not None),
+        "AGENT_MEMORY_API_KEY": ("远程记忆 API Key", lambda v: v is not None),
         "XIAOPAW_TEST_API_ENABLED": ("TestAPI 开关", lambda v: v in [True, False, None]),
     }
-    
+    optional_unset_hints = {
+        "MEMORY_DB_DSN": "(未设置 - L21 向量记忆将不可用)",
+        "AGENT_MEMORY_URL": "(未设置 - 远程长期记忆将不可用)",
+        "AGENT_MEMORY_API_KEY": "(未设置 - 远程长期记忆将不可用)",
+    }
+
     for var_name, (desc, validator) in other_vars.items():
         value = os.getenv(var_name, '')
         status = validator(value) if callable(validator) else bool(value)
-        
-        icon = "✅" if (status or var_name == "MEMORY_DB_DSN" and not value) else "⚠️ "
-        
-        if var_name == "MEMORY_DB_DSN":
-            display_value = "(未设置 - L21 向量记忆将不可用)" if not value else "已设置"
+
+        icon = "✅" if (status or var_name in optional_unset_hints and not value) else "⚠️ "
+
+        if var_name in optional_unset_hints:
+            display_value = optional_unset_hints[var_name] if not value else "已设置"
         elif value:
             display_value = str(value)
         else:
             display_value = "(默认值)"
-        
+
         print(f"  {icon} {var_name}: {display_value}")
+
+    # 可选：远程记忆服务（agent-memory-system）连通性探测
+    memory_url = os.getenv("AGENT_MEMORY_URL", "")
+    if check_api and memory_url:
+        print()
+        print("-" * 50)
+        print("📡 远程记忆服务连通性测试:")
+        print("-" * 50)
+        valid, msg = test_agent_memory_service(memory_url, os.getenv("AGENT_MEMORY_API_KEY", ""))
+        print(f"   {msg}")
+        if not valid:
+            all_passed = False
     
     print()
     print("=" * 50)

@@ -59,6 +59,39 @@ class MemoryConfig(BaseModel):
     compress_threshold: float = 0.45
     context_window_tokens: int = 32000
     fresh_keep_turns: int = 10
+    # 远程长期记忆（agent-memory-system）对接配置。base_url 需含 /api/v1
+    # 前缀（如 http://localhost:8000/api/v1）；两者都非空且 feature flag
+    # enable_remote_memory 开启时才生效。
+    remote_base_url: str = ""
+    remote_api_key: str = ""
+    remote_timeout: float = Field(default=10.0, ge=1.0, le=120.0)
+    recall_top_k: int = Field(default=5, ge=1, le=20)
+    # 召回注入的长期记忆最大字符数（防止挤占上下文窗口）
+    recall_max_chars: int = Field(default=4000, ge=200, le=20000)
+    # Phase 4 片段生命周期治理：普通对话片段 TTL（天）0 = 永久保存
+    fragment_ttl_days: int = Field(default=90, ge=0, le=3650)
+    # 启发式 importance 打分：命中显式陈述模式（记住/我是/以后…）用 high
+    importance_default: float = Field(default=0.4, ge=0.0, le=1.0)
+    importance_high: float = Field(default=0.7, ge=0.0, le=1.0)
+    # 摘要化写入：LLM 一句话摘要超时（秒），失败/超时回退原文拼接
+    summary_timeout: float = Field(default=5.0, ge=1.0, le=30.0)
+    # Phase 5 结构化记忆表白名单：表名 → 字段 schema（name/type）。
+    # 模型只能写入白名单内的表，防 schema 泛滥；需同时开启
+    # feature_flags.enable_structured_tables。
+    structured_tables: dict[str, list[dict[str, str]]] = Field(
+        default_factory=lambda: {
+            "todo": [
+                {"name": "title", "type": "TEXT"},
+                {"name": "due_date", "type": "TEXT"},
+                {"name": "status", "type": "TEXT"},
+            ],
+            "expense": [
+                {"name": "item", "type": "TEXT"},
+                {"name": "amount", "type": "REAL"},
+                {"name": "date", "type": "TEXT"},
+            ],
+        }
+    )
 
 
 class SessionConfig(BaseModel):

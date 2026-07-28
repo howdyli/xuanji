@@ -10,6 +10,7 @@
  * - 文件类型图标 + 元信息 + 下载/收藏
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { downloadFile } from '../api/client'
 
 const API_BASE = '/api/frontend'
 
@@ -269,13 +270,13 @@ export function LibraryView({ authToken }: { authToken: string | null }) {
     })
   }
 
-  // Download file
-  const handleDownload = (file: FileInfo) => {
-    const url = `${API_BASE}/files/download?path=/workspace${file.path}`
-    const a = document.createElement('a')
-    a.href = url
-    a.download = file.name
-    a.click()
+  // Download file（裸 <a href> 不携带 Authorization 头会被 401 拒绝，统一走 downloadFile）
+  const handleDownload = async (file: FileInfo) => {
+    try {
+      await downloadFile(`/workspace${file.path}`, file.name)
+    } catch (e) {
+      console.error('library download failed:', e)
+    }
   }
 
   return (

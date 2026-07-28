@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { apiFetch, downloadFile } from '../api/client'
 
 // ── types ──────────────────────────────────────────────────────────────
 
@@ -39,8 +40,8 @@ export function WorkspaceView() {
   // ── load tree on mount ──────────────────────────────────────────────
 
   useEffect(() => {
-    fetch(`${API}/tree`)
-      .then((r) => r.json())
+    // apiFetch 自动携带 Authorization 头（登录启用后裸 fetch 会被 401 拒绝）
+    apiFetch<TreeNode>(`${API}/tree`)
       .then((data) => {
         setTree(data)
         setLoading(false)
@@ -66,8 +67,7 @@ export function WorkspaceView() {
     setEditing(false)
     setFileData(null)
     try {
-      const res = await fetch(`${API}/read?path=${encodeURIComponent(path)}`)
-      const data: FileData = await res.json()
+      const data = await apiFetch<FileData>(`${API}/read?path=${encodeURIComponent(path)}`)
       setFileData(data)
     } catch {
       setFileData({ error: 'load failed', path, size: 0 })
@@ -86,15 +86,10 @@ export function WorkspaceView() {
   const saveFile = useCallback(async () => {
     if (!selectedPath) return
     try {
-      const res = await fetch(
+      const data = await apiFetch<{ success?: boolean }>(
         `${API}/write?path=${encodeURIComponent(selectedPath)}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: editContent }),
-        },
+        { method: 'POST', json: { content: editContent } },
       )
-      const data = await res.json()
       if (data.success) {
         setFileData((prev) =>
           prev ? { ...prev, content: editContent } : null,
@@ -188,7 +183,6 @@ export function WorkspaceView() {
     // ── binary file ─────────────────────────────────────────────────
     if (fileData.binary) {
       const filename = selectedPath.split('/').pop() || ''
-      const downloadUrl = `/api/frontend/files/download?path=${encodeURIComponent(selectedPath)}`
       return (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
@@ -201,14 +195,17 @@ export function WorkspaceView() {
             <div className="text-[11px] text-gray-400 mb-3">
               {(fileData.size / 1024).toFixed(1)} KB &middot; 二进制文件
             </div>
-            <a
-              href={downloadUrl}
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              onClick={() => {
+                // 下载端点要求 /workspace/ 前缀且需携带鉴权头，统一走 downloadFile
+                downloadFile(`/workspace${selectedPath}`, filename).catch((err) =>
+                  console.error('workspace download failed:', err),
+                )
+              }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-900 text-white text-[12px] hover:bg-gray-800 transition-colors"
             >
               下载文件
-            </a>
+            </button>
           </div>
         </div>
       )

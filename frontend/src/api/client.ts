@@ -168,6 +168,31 @@ export async function rawFetch(path: string, options: ApiFetchOptions = {}): Pro
   return res
 }
 
+// ─── 文件下载 ─────────────────────────────────────────────────────────────────
+
+/**
+ * 带鉴权头下载工作空间文件并触发浏览器保存。
+ *
+ * 裸 `<a href>` 导航不携带 Authorization 头，登录启用后会被 401 拒绝，
+ * 因此统一用 rawFetch + Blob + objectURL 的方式下载。
+ *
+ * @param workspacePath 沙箱路径（如 /workspace/sessions/xxx/outputs/a.docx）
+ * @param filename 保存的文件名
+ * @throws ApiError 下载失败时（非 2xx / 网络错误）
+ */
+export async function downloadFile(workspacePath: string, filename: string): Promise<void> {
+  const res = await rawFetch(
+    `${API_BASE}/files/download?path=${encodeURIComponent(workspacePath)}`,
+  )
+  const blob = await res.blob()
+  const objectUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = objectUrl
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(objectUrl)
+}
+
 // ─── SSE 流式聊天 ────────────────────────────────────────────────────────────
 
 export interface StreamMessageBody {
