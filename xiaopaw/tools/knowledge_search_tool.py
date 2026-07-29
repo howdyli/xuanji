@@ -42,6 +42,8 @@ class KnowledgeSearchTool(BaseTool):
     # Session-bound base allowlist: non-empty restricts retrieval to these
     # bases (LLM-supplied kb_id outside the list is ignored, not an error).
     allowed_kb_ids: list[str] | None = None
+    # Optional reranker instance (see xiaopaw.knowledge.reranker)
+    reranker: object | None = None
 
     def _run(self, query: str, kb_id: str | None = None, top_k: int | None = None, **_) -> str:
         if not self.db_dsn:
@@ -80,6 +82,7 @@ class KnowledgeSearchTool(BaseTool):
                 kb_id=effective_kb_id,
                 kb_ids=effective_kb_ids,
                 top_k=top_k or self.default_top_k,
+                reranker=self.reranker,
             )
         except Exception as exc:
             logger.exception("knowledge search failed")

@@ -257,6 +257,9 @@ class KnowledgeStore:
 
         with self._conn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                # Tune HNSW ef_search for better recall at query time.
+                cur.execute("SET LOCAL hnsw.ef_search = 100")
+
                 cur.execute(
                     select
                     + f"WHERE {tenant_sql}{kb_sql} AND c.embedding IS NOT NULL "
@@ -269,8 +272,8 @@ class KnowledgeStore:
                 cur.execute(
                     select
                     + f"WHERE {tenant_sql}{kb_sql} "
-                    + "AND c.search_tsv @@ plainto_tsquery('simple', %(qtext)s) "
-                    + "ORDER BY ts_rank(c.search_tsv, plainto_tsquery('simple', %(qtext)s)) DESC "
+                    + "AND c.search_tsv @@ websearch_to_tsquery('simple', %(qtext)s) "
+                    + "ORDER BY ts_rank(c.search_tsv, websearch_to_tsquery('simple', %(qtext)s)) DESC "
                     + "LIMIT %(limit)s",
                     params,
                 )

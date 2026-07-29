@@ -132,3 +132,41 @@ python /mnt/skills/search_memory/scripts/search.py --query "PDF转换" --mode fu
   3. 最后切换到 `--mode vector` 纯语义搜索（关键字可能不准）
 - 如果需要查看完整回复内容，`assistant_reply` 字段已包含
 
+---
+
+## 图谱记忆查询（Phase C1）
+
+当 `enable_graph_memory` feature flag 开启时，可通过图谱 API 查询实体间的关联关系，
+补充语义搜索无法覆盖的结构化关系信息。
+
+### 图谱查询场景
+
+| 场景 | 示例 |
+|------|------|
+| 查询某人的关系网 | “张三认识谁”、“张三的同事有哪些” |
+| 查询两人之间的关系 | “张三和李四是什么关系” |
+| 查询某人的圈子 | “张三的社交圈” |
+
+### 调用方式
+
+图谱查询通过 `remote_memory_store.graph_query(entity, depth=2)` 调用，返回：
+
+```json
+[
+  {"entity": "张三", "relation": "colleague", "target": "李四", "weight": 0.9},
+  {"entity": "张三", "relation": "friend", "target": "王五", "weight": 0.8}
+]
+```
+
+### 与语义搜索配合
+
+1. 先执行语义搜索（本 skill 的默认能力）
+2. 如果结果中包含人物实体，可追加图谱查询获取关联关系
+3. 将图谱结果作为补充上下文注入回答
+
+### 注意事项
+
+- 图谱查询失败时静默返回空列表，不影响主流程
+- 查询深度默认 2 层，可通过 `depth` 参数调整
+- 图谱数据来源于对话中的实体关系抽取（fire-and-forget 异步写入）
+

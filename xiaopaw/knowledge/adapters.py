@@ -11,9 +11,13 @@ ingestion pipeline.
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -88,9 +92,41 @@ class FileAdapter:
 
     @staticmethod
     def _extract_pdf(path: Path) -> list[Section]:
+        """Extract text from PDF.
+
+        Three-level cascade:
+        Level 1: pypdf pure text extraction
+        Level 2: pdfplumber text + tables (when XIAOPAW_DEEP_PDF_PARSE enabled)
+        Level 3: Vision-model OCR fallback (when XIAOPAW_OCR_ENABLED enabled)
+        """
+        # ── Level 2: deep PDF parse (pdfplumber) ────────────────────────
+        enable_deep = os.environ.get("XIAOPAW_DEEP_PDF_PARSE", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if enable_deep:
+            try:
+                from xiaopaw.knowledge.pdf_parser import DeepPdfParser
+
+                parser = DeepPdfParser()
+                sections = parser.parse(path)
+                if sections:
+                    return sections
+                logger.warning(
+                    "deep PDF parse returned no sections, falling back to pypdf"
+                )
+            except ImportError:
+                logger.warning("pdfplumber not installed, falling back to pypdf")
+            except Exception as exc:
+                logger.warning(
+                    "deep PDF parse failed: %s, falling back to pypdf", exc
+                )
+
+        # ── Level 1: pypdf pure text extraction ─────────────────────────
         try:
             from pypdf import PdfReader
-        except ImportError as exc:  # pragma: no cover - env guard
+        except ImportError as exc:
             raise AdapterError("pypdf not installed; cannot parse PDF") from exc
 
         reader = PdfReader(str(path))
@@ -99,8 +135,70 @@ class FileAdapter:
             text = (page.extract_text() or "").strip()
             if text:
                 sections.append(Section(text=text, locator=f"page={i}"))
-        if not sections:
-            raise AdapterError("no extractable text in PDF (scanned image?)")
+        if sections:
+            return sections
+
+        # ── Level 3: Vision-model OCR fallback ──────────────────────────
+        enable_ocr = os.environ.get("XIAOPAW_OCR_ENABLED", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if enable_ocr:
+            ocr_sections = FileAdapter._ocr_fallback(path)
+            if ocr_sections:
+                logger.info("OCR fallback produced %d sections for %s", len(ocr_sections), path.name)
+                return ocr_sections
+
+        raise AdapterError("no extractable text in PDF (scanned image?)")
+
+    @staticmethod
+    def _ocr_fallback(path: Path) -> list[Section]:
+        """Attempt OCR on a scanned PDF using pdf2image + vision model.
+
+        Returns an empty list when any dependency is missing or OCR fails,
+        so the caller can decide whether to raise.
+        """
+        try:
+            from pdf2image import convert_from_path
+        except ImportError:
+            logger.warning("OCR fallback: pdf2image not installed")
+            return []
+
+        try:
+            from xiaopaw.knowledge.vision_ocr import VisionOCR
+        except ImportError:
+            logger.warning("OCR fallback: vision_ocr module unavailable")
+            return []
+
+        page_limit = int(os.environ.get("XIAOPAW_OCR_PAGE_LIMIT", "50"))
+        timeout = int(os.environ.get("XIAOPAW_OCR_TIMEOUT", "30"))
+
+        try:
+            images = convert_from_path(str(path), first_page=1, last_page=page_limit)
+        except Exception as exc:
+            logger.warning("OCR fallback: pdf2image conversion failed: %s", exc)
+            return []
+
+        page_bytes = []
+        for img in images:
+            import io
+
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            page_bytes.append(buf.getvalue())
+
+        if not page_bytes:
+            return []
+
+        ocr = VisionOCR(page_limit=page_limit, timeout=timeout)
+        texts = ocr.ocr_pages(page_bytes)
+
+        sections: list[Section] = []
+        for i, text in enumerate(texts, start=1):
+            text = text.strip()
+            if text:
+                sections.append(Section(text=text, locator=f"page={i}"))
         return sections
 
     @staticmethod

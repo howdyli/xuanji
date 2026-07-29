@@ -1,0 +1,210 @@
+# XiaoPaw v3.0 容器化配置（docker run 时挂载为 /app/config.yaml）
+# 与 config.yaml 的差异：宿主机服务地址改为 host.docker.internal；web 绑定 0.0.0.0
+
+workspace: "data/workspace"
+data_dir: "data"
+
+feishu:
+  app_id: "cli_a93fd73285f8dcc8"        # 飞书应用 App ID
+  app_secret: "${FEISHU_APP_SECRET}" # 飞书应用 App Secret（从环境变量读取）
+  allowed_chats: []                  # 允许的群聊 ID（空 = 全部允许）
+
+agent:
+  model: "deepseek-v4-flash"       # v4 思考模型；已实测 native 工具路径无需回传 reasoning_content
+  max_iter: 50
+  max_input_tokens: 30000
+  sub_agent_model: "deepseek-v4-flash"
+  sub_agent_max_iter: 20
+  timeout_s: 300
+  llm_timeout_s: 120
+
+sandbox:
+  url: "http://host.docker.internal:8030/mcp"
+  timeout_s: 120
+  per_session: false  # 短期#9：按会话隔离沙箱（实验性，需本机 docker）
+
+memory:
+  db_dsn: "${MEMORY_DB_DSN:-}"  # 启用 L21 向量记忆需配置: postgresql://xiaopaw:<password>@localhost:5432/xiaopaw
+  # 部署 pgvector 容器: docker run -d --name pgvector -e POSTGRES_USER=xiaopaw -e POSTGRES_PASSWORD=<strong_password> -p 5432:5432 pgvector/pgvector:pg16
+  # 初始化 schema: psql "$MEMORY_DB_DSN" -f schema.sql
+  hard_limit_lines: 250
+  max_save_length: 2000
+  compress_threshold: 0.45
+  context_window_tokens: 32000
+  # 远程长期记忆（agent-memory-system）：需同时开启 feature_flags.enable_remote_memory
+  # base_url 必须包含 /api/v1 前缀；部署记忆服务见 pm/agent-memory-system/docker-compose.yml
+  remote_base_url: "${AGENT_MEMORY_URL:-}"       # 如 http://localhost:8000/api/v1
+  remote_api_key: "${AGENT_MEMORY_API_KEY:-}"    # 记忆系统 API Key（amk_xxx）
+  remote_timeout: 10.0
+  recall_top_k: 5
+  recall_max_chars: 4000
+
+session:
+  max_active_sessions: 1000
+  max_history_turns: 20
+
+runner:
+  max_queue_size: 10
+  idle_timeout_s: 300
+
+sender:
+  max_retries: 3
+  retry_backoff: [1.0, 2.0, 4.0]
+  max_concurrent: 5
+
+debug:
+  enable_test_api: true  # 开发环境启用 TestAPI
+  test_api_host: "127.0.0.1"
+  test_api_port: 9090
+  test_api_token: "${XIAOPAW_TESTAPI_TOKEN:-test-token-dev-2024}"
+
+frontend:
+  enabled: true
+  host: "0.0.0.0"   # 容器内需绑 0.0.0.0，端口映射层限制为 127.0.0.1
+  port: 8080
+
+observability:
+  metrics_host: "0.0.0.0"
+  metrics_port: 8090
+  log_json: true
+  langfuse_host: "http://host.docker.internal:3000"
+  langfuse_public_key: ""   # 环境变量: XIAOPAW_LANGFUSE_PUBLIC_KEY（优先）或 LANGFUSE_PUBLIC_KEY
+  langfuse_secret_key: ""   # 环境变量: XIAOPAW_LANGFUSE_SECRET_KEY（优先）或 LANGFUSE_SECRET_KEY
+  enable_langfuse: true     # 环境变量: TRACE_TO_LANGFUSE=true
+
+rate_limit:
+  per_user_per_minute: 20
+
+replay_cache:
+  maxsize: 10000
+  ttl_sec: 300
+
+cron:
+  enabled: true
+  check_interval_s: 30
+  filelock_timeout_s: 10
+  max_dlq_retries: 3
+
+cleanup:
+  enabled: true
+  session_ttl_days: 180
+  trace_ttl_days: 30
+  raw_ttl_days: 30
+  run_hour_utc: 3
+
+feature_flags:
+  token_counter_mode: "hf_deepseek"  # hf_deepseek | rough
+  enable_skill_timeout: true
+  enable_cron_filelock: true
+  enable_memory_save_filelock: true
+  enable_trace_id: true
+  enable_mcp_whitelist: true
+  enable_memory_save_filter: true
+  enable_webhook_replay_cache: true
+  enable_inbound_rate_limit: true
+  enable_remote_memory: true  # 远程长期记忆（agent-memory-system SDK 对接，需 配置 memory.remote_*）
+  enable_structured_tables: true  # Phase 5: 结构化记忆表工具（需同时开启 enable_remote_memory）
+
+# ── P2-1 多模型路由配置 ────────────────────────────────────
+# 支持多个 AI 模型自动选择、负载均衡和故障转移
+# 详细文档: docs/model-routing-guide.md
+
+routing:
+  # 默认模型（未匹配到任务路由时使用）
+  default_model: "deepseek-v4-flash"
+  # 默认路由策略：cost_first / quality_first / latency_sensitive / round_robin / priority
+  default_strategy: "cost_first"
+
+  # 模型注册表（可动态添加/删除）
+  models:
+    # ─── DeepSeek 系列 ───
+    deepseek-v4-flash:
+      display_name: "DeepSeek V4 Flash"
+      provider: "deepseek"
+      api_key_env: "DEEPSEEK_API_KEY"
+      region: "deepseek"
+      max_context_tokens: 65536
+      supports_function_calling: true
+      supports_vision: false
+      is_reasoning_model: true         # v4 返回 reasoning_content（实测无需回传）
+      cost_per_1k_tokens: 0.0014        # ¥1.4 / 百万 token (输入)
+      cost_per_1k_output: 0.0028       # ¥2.8 / 百万 token (输出)
+      avg_latency_ms: 800              # 平均响应 ~800ms
+      quality_score: 7.5               # 质量评分 (1-10)
+      timeout_s: 120
+      retry_count: 2
+      weight: 100                      # 轮询权重
+      enabled: true
+      healthy: true
+
+    deepseek-v4-pro:
+      display_name: "DeepSeek V4 Pro"
+      provider: "deepseek"
+      api_key_env: "DEEPSEEK_API_KEY"
+      region: "deepseek"
+      max_context_tokens: 65536
+      supports_function_calling: true
+      supports_vision: false
+      is_reasoning_model: true         # 思考模型，有 reasoning_content
+      cost_per_1k_tokens: 0.0055        # ¥5.5 / 百万 token (输入)
+      cost_per_1k_output: 0.02199       # ¥22 / 百万 token (输出)
+      avg_latency_ms: 5000             # 推理时间较长 (~5s)
+      quality_score: 9.0               # 高质量推理
+      timeout_s: 300                   # 需要更长超时
+      retry_count: 2
+      weight: 50                       # 低权重（成本高）
+      enabled: true                    # 默认启用（可按需关闭）
+      healthy: true
+
+    # ─── 阿里云 Qwen 系列（可选）─────────────────────────────
+    qwen-plus:
+      display_name: "Qwen Plus (通义千问)"
+      provider: "qwen"
+      api_key_env: "QWEN_API_KEY"     # 或 DASHSCOPE_API_KEY
+      region: "cn"                     # 阿里云 DashScope 端点
+      max_context_tokens: 131072
+      supports_function_calling: true
+      supports_vision: true             # 支持 VL 能力
+      is_reasoning_model: false
+      cost_per_1k_tokens: 0.0020        # ¥2 / 百万 token
+      cost_per_1k_output: 0.0060
+      avg_latency_ms: 1200
+      quality_score: 7.0
+      timeout_s: 120
+      retry_count: 2
+      weight: 80
+      enabled: false                  # 默认关闭（需配置 API Key）
+      healthy: true
+
+    qwen-max:
+      display_name: "Qwen Max (最强版)"
+      provider: "qwen"
+      api_key_env: "QWEN_API_KEY"
+      region: "cn"
+      max_context_tokens: 131072
+      supports_function_calling: true
+      supports_vision: true
+      is_reasoning_model: false
+      cost_per_1k_tokens: 0.0080
+      cost_per_1k_output: 0.0240
+      avg_latency_ms: 2000
+      quality_score: 8.5
+      timeout_s: 180
+      retry_count: 2
+      weight: 60
+      enabled: false
+      healthy: true
+
+  # 任务路由规则（按优先级排序的候选模型列表）
+  task_routes:
+    orchestrator: ["deepseek-v4-flash"]           # 主任务编排 → V4 Flash
+    skill_execution: ["deepseek-v4-flash"]         # 技能执行 → V4 Flash
+    memory_indexing: ["deepseek-v4-flash"]         # 记忆索引 → V4 Flash
+    code_generation: ["deepseek-v4-pro", "deepseek-v4-flash"]  # 代码生成 → Pro > Flash
+    data_analysis: ["qwen-max", "deepseek-v4-flash"]            # 数据分析（需开启 qwen-max）
+    general_chat: ["deepseek-v4-flash"]            # 通用对话 → V4 Flash
+    multimodal: ["qwen-plus", "deepseek-v4-flash"] # 图片理解（需开启 qwen-plus）
+
+  # 全局故障转移链（当前模型不可用时依次尝试）
+  fallback_chain: ["deepseek-v4-flash", "deepseek-v4-pro", "qwen-plus"]
+

@@ -25,7 +25,6 @@ from xiaopaw.hook_framework.crew_adapter import get_current_adapter
 
 from xiaopaw.agents.models import MainTaskOutput
 from xiaopaw.config.flags import FeatureFlags
-from xiaopaw.llm.aliyun_llm import AliyunLLM
 from xiaopaw.llm.model_router import model_router  # ✅ P2-1: 多模型路由器
 from xiaopaw.memory.bootstrap import build_bootstrap_prompt
 from xiaopaw.memory.context_mgmt import (
@@ -448,7 +447,7 @@ class MemoryAwareCrew:
     async def run_and_index(self) -> tuple[str, list[str]]:
         try:
             max_retries = 2
-            last_exc: Exception | None = None
+            _last_exc: Exception | None = None
 
             for attempt in range(max_retries):
                 try:
@@ -457,7 +456,7 @@ class MemoryAwareCrew:
                     )
                     break  # success
                 except Exception as exc:
-                    last_exc = exc
+                    _last_exc = exc
                     exc_str = str(exc)
                     # Retry on transient CrewAI storage/DB errors
                     if "Database initialization error" in exc_str or "unable to open database file" in exc_str:
@@ -500,6 +499,10 @@ class MemoryAwareCrew:
                         assistant_reply=reply,
                         turn_ts=self._turn_start_ts,
                         db_dsn=self._db_dsn,
+                        messages=[
+                            {"role": "user", "content": self.user_message},
+                            {"role": "assistant", "content": reply},
+                        ],
                     )
                 )
                 self._index_tasks.add(index_task)
@@ -507,12 +510,54 @@ class MemoryAwareCrew:
 
             # 远程长期记忆双写（fire-and-forget，与 pgvector 索引互不影响）
             if getattr(self._flags, "enable_remote_memory", False):
-                remote_memory_store.save_turn_background(
-                    session_id=self.session_id,
-                    routing_key=self.routing_key,
-                    user_message=self.user_message,
-                    assistant_reply=reply,
+                # Phase C2: 统一双写（enable_memory_sync 门控）
+                if getattr(self._flags, "enable_memory_sync", False):
+                    from xiaopaw.memory.memory_sync import MemorySyncManager
+                    sync_mgr = MemorySyncManager(remote_memory_store, self._db_dsn)
+                    sync_task = asyncio.get_running_loop().create_task(
+                        sync_mgr.write_through(
+                            session_id=self.session_id,
+                            routing_key=self.routing_key,
+                            user_message=self.user_message,
+                            assistant_reply=reply,
+                            turn_ts=self._turn_start_ts,
+                        )
+                    )
+                    self._index_tasks.add(sync_task)
+                    sync_task.add_done_callback(self._index_tasks.discard)
+                elif getattr(self._flags, "enable_memory_extraction", False):
+                    # Phase A1: LLM 驱动的结构化记忆抽取（失败降级到 save_turn）
+                    messages_for_extraction = [
+                        {"role": "user", "content": self.user_message},
+                        {"role": "assistant", "content": reply},
+                    ]
+                    extract_task = asyncio.get_running_loop().create_task(
+                        self._extract_or_fallback(
+                            self.session_id, messages_for_extraction, reply,
+                        )
+                    )
+                    self._index_tasks.add(extract_task)
+                    extract_task.add_done_callback(self._index_tasks.discard)
+                else:
+                    remote_memory_store.save_turn_background(
+                        session_id=self.session_id,
+                        routing_key=self.routing_key,
+                        user_message=self.user_message,
+                        assistant_reply=reply,
+                    )
+
+            # Phase C1: 图谱摄取（fire-and-forget，需同时开启 remote_memory + graph_memory）
+            if (
+                getattr(self._flags, "enable_remote_memory", False)
+                and getattr(self._flags, "enable_graph_memory", False)
+            ):
+                graph_task = asyncio.get_running_loop().create_task(
+                    remote_memory_store.graph_ingest(
+                        self.user_message, session_id=self.session_id,
+                    )
                 )
+                self._index_tasks.add(graph_task)
+                graph_task.add_done_callback(self._index_tasks.discard)
 
             return reply, used_skills
         finally:
@@ -534,6 +579,50 @@ class MemoryAwareCrew:
                     logger.info("removed stale CrewAI DB lock file: %s", lock_file)
         except Exception as e:
             logger.debug("cleanup_crewai_db_locks: %s", e)
+
+    async def _extract_or_fallback(
+        self, session_id: str, messages: list[dict], reply: str,
+    ) -> None:
+        """Phase A1: 调用 extract_and_save，失败时降级到 save_turn_background。"""
+        try:
+            result = await remote_memory_store.extract_and_save(session_id, messages)
+            if not result.get("saved"):
+                # extraction 失败，降级到普通 save_turn
+                logger.info(
+                    "extraction returned 0 saved, falling back to save_turn for session %s",
+                    session_id,
+                )
+                remote_memory_store.save_turn_background(
+                    session_id=session_id,
+                    routing_key=self.routing_key,
+                    user_message=self.user_message,
+                    assistant_reply=reply,
+                )
+        except Exception as exc:
+            logger.warning("extract_or_fallback failed, falling back: %s", exc)
+            remote_memory_store.save_turn_background(
+                session_id=session_id,
+                routing_key=self.routing_key,
+                user_message=self.user_message,
+                assistant_reply=reply,
+            )
+
+    @staticmethod
+    def _format_layered_recall(layered: dict) -> str:
+        """格式化三层召回结果为文本。
+
+        Level 1 (profile) 始终包含在头部。
+        Level 2 (semantic) 作为主体内容。
+        Level 3 (entity_expansion) 追加在末尾。
+        """
+        parts: list[str] = []
+        if layered.get("profile"):
+            parts.append(f"[用户画像]\n{layered['profile']}")
+        if layered.get("semantic"):
+            parts.append(f"[相关记忆]\n{layered['semantic']}")
+        if layered.get("entity_expansion"):
+            parts.append(f"[关联信息]\n{layered['entity_expansion']}")
+        return "\n\n".join(parts) if parts else ""
 
 
 def build_agent_fn(
@@ -579,9 +668,16 @@ def build_agent_fn(
             and getattr(flags, "enable_remote_memory", False)
             and remote_memory_store.is_enabled
         ):
-            recalled_memory = await remote_memory_store.recall(
-                query=user_message, routing_key=routing_key
-            )
+            # Phase B1: 分层召回（enable_layered_recall flag 门控）
+            if getattr(flags, "enable_layered_recall", False):
+                layered = await remote_memory_store.recall_layered(
+                    user_message, token_budget=4000,
+                )
+                recalled_memory = MemoryAwareCrew._format_layered_recall(layered)
+            else:
+                recalled_memory = await remote_memory_store.recall(
+                    query=user_message, routing_key=routing_key
+                )
             # Phase 4 FR-1：已存偏好合并读取（失败返回空 dict 不阻断）
             user_preferences = await remote_memory_store.get_preferences(
                 routing_key=routing_key

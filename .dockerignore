@@ -1,0 +1,63 @@
+# Python / Build
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# Env / secrets
+.env
+.env.*
+
+# Data (runtime mount, not baked into image)
+data/
+
+# Tests & dev
+tests/
+reports/
+screenshots/
+docs/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.qoder/
+.codebuddy/
+.workbuddy/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+*.swp
+
+# Docker build artifacts
+.build-pgvector/
+
+# Frontend sources (only frontend/build is baked into image)
+frontend/node_modules/
+frontend/src/
+frontend/public/
+
+# Misc
+*.zip
+*.out
+*.log
+benchmark.py
+test_model_router.py
+verify-env.py
+verify_setup.py
+check_app.sh
+setup-env.sh

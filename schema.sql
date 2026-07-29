@@ -407,3 +407,9 @@ CREATE TABLE IF NOT EXISTS session_knowledge_bases (
 
 CREATE INDEX IF NOT EXISTS idx_skb_session ON session_knowledge_bases (session_id);
 
+-- ============================================================
+-- P1 记忆系统升级：新增字段
+-- ============================================================
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS importance_score REAL DEFAULT 0.4;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS fragment_type TEXT DEFAULT 'info';
+

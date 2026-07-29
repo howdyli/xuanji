@@ -1,0 +1,45 @@
+# XiaoPaw 主服务容器化编排
+#
+# 用法：
+#   docker build -t xiaopaw:latest .                       # 构建镜像（网络受限时加 --build-arg https_proxy=http://host.docker.internal:7897）
+#   docker compose -f app-docker-compose.yaml up -d        # 启动主服务
+#   docker compose -f sandbox-docker-compose.yaml up -d    # 沙箱（另行启动）
+#
+# 依赖的宿主机服务（容器内经 host.docker.internal 访问）：
+#   - PostgreSQL/pgvector :5432（知识库 + L21 向量记忆）
+#   - agent-memory-system 后端 :8000（远程长期记忆）
+#   - AIO-Sandbox :8030（技能执行，见 sandbox-docker-compose.yaml）
+
+services:
+  xiaopaw:
+    image: xiaopaw:latest
+    container_name: xiaopaw-main
+    ports:
+      - "127.0.0.1:8080:8080"   # Web 控制台 + Frontend API
+      - "127.0.0.1:8090:8090"   # Prometheus metrics
+    env_file: .env
+    environment:
+      # .env 中该行带行内注释，--env-file 会原样带入导致 production 误判，这里显式覆盖
+      XIAOPAW_ENV: dev
+      # 宿主机服务地址（覆盖 .env 中的 localhost 值）
+      MEMORY_DB_DSN: postgresql://xiaopaw:xiaopaw@host.docker.internal:5432/xiaopaw
+      AGENT_MEMORY_URL: http://host.docker.internal:8000/api/v1
+      # 非 root（65534）用户无 HOME，为 CrewAI/HF 缓存指定可写目录
+      HOME: /app/data/.home
+      XDG_DATA_HOME: /app/data/.home/.local/share
+      # agent-memory SDK 以源码挂载方式注入
+      PYTHONPATH: /deps:/sdk
+      # 关闭 CrewAI 遥测（外网不可达时刷 WARNING）
+      CREWAI_DISABLE_TELEMETRY: "true"
+      OTEL_SDK_DISABLED: "true"
+    volumes:
+      - ./config.docker.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+      - ../pm/agent-memory-system/sdk-python/src:/sdk:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/ > /dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

@@ -64,6 +64,7 @@ def retrieve(
     kb_ids: list[str] | None = None,
     top_k: int = 6,
     candidate_limit: int = 20,
+    reranker=None,
 ) -> list[RetrievedChunk]:
     """Embed the query, fetch tenant-scoped candidates, and fuse them.
 
@@ -94,8 +95,19 @@ def retrieve(
     fused_ids = rrf_fuse(
         [r["id"] for r in vector_rows],
         [r["id"] for r in text_rows],
-        top_k=top_k,
+        top_k=candidate_limit,
     )
+
+    # Optional reranking
+    if reranker is not None and fused_ids:
+        import time as _time
+        _rerank_start = _time.monotonic()
+        contents = [by_id[cid]["content"] for cid in fused_ids]
+        rerank_results = reranker.rerank(query, contents, top_n=top_k)
+        fused_ids = [fused_ids[r["index"]] for r in rerank_results if r["index"] < len(fused_ids)]
+        logger.info("rerank took %.3fs", _time.monotonic() - _rerank_start)
+    else:
+        fused_ids = fused_ids[:top_k]
 
     results: list[RetrievedChunk] = []
     for n, cid in enumerate(fused_ids, start=1):

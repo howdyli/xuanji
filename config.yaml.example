@@ -39,6 +39,14 @@ memory:
   importance_default: 0.4   # 普通片段 importance 分
   importance_high: 0.7      # 含显式陈述（记住/我是/以后…）的片段分
   summary_timeout: 5.0      # LLM 一句话摘要超时（秒），失败回退原文拼接
+  # 生命周期管理
+  lifecycle_interval_hours: 6
+  conflict_check_interval_hours: 24
+  # 半衰期配置（天）
+  half_life_info: -1          # -1 表示永久
+  half_life_plan: 90
+  half_life_preference: 1
+  half_life_event: 30
   # Phase 5 结构化记忆表白名单（需同时开启 feature_flags.enable_structured_tables）。
   # 不配置时使用内置默认：todo(title/due_date/status)、expense(item/amount/date)。
   # structured_tables:
@@ -50,6 +58,12 @@ memory:
   #     - {name: item, type: TEXT}
   #     - {name: amount, type: REAL}
   #     - {name: date, type: TEXT}
+  # Phase C1 图谱配置
+  graph_depth: 2                  # 图谱查询深度
+  graph_ingest_on_save: true      # 保存记忆时同步摄取图谱
+  # Phase C2 同步配置
+  sync_interval_hours: 12         # 全量同步间隔（小时）
+  sync_batch_size: 100            # 同步批次大小
 
 session:
   max_active_sessions: 1000
@@ -104,6 +118,22 @@ cleanup:
   raw_ttl_days: 30
   run_hour_utc: 3
 
+knowledge:
+  chunk_strategy: "recursive"    # recursive | structure_aware
+  structure_aware:
+    topic_similarity_threshold: 0.2
+    max_chunk_tokens: 800
+    min_chunk_tokens: 100
+  # PDF/OCR 配置
+  ocr_engine: "vision_model"    # tesseract | vision_model
+  ocr_page_limit: 50            # 单次 OCR 最大页数
+  ocr_timeout: 30               # OCR 单次请求超时（秒）
+  pdf_text_coverage_threshold: 0.3
+  enable_knowledge_rerank: true
+  rerank_backend: "local"    # local | api | none
+  rerank_model: "BAAI/bge-reranker-v2-m3"
+  rerank_top_n: 6
+
 skills:
   # User skills directory (relative paths are resolved against project root)
   user_dir: "data/user_skills"
@@ -123,3 +153,11 @@ feature_flags:
   enable_multi_agent_collab: false  # P3-1: 开启后走 规划→执行→审查 三角色管线
   enable_remote_memory: false  # 远程长期记忆（agent-memory-system SDK 对接，需配置 memory.remote_*）
   enable_structured_tables: false  # Phase 5: 结构化记忆表工具（需同时开启 enable_remote_memory）
+  # ---- 记忆系统升级（P1）— 建议逐步开启 ----
+  enable_memory_extraction: false  # LLM 结构化记忆抽取（增加 API 调用，建议先在测试环境验证）
+  enable_memory_lifecycle: false   # 记忆生命周期管理（衰减/冷标记，保守开启）
+  enable_layered_recall: false     # 三层分层召回（增加 API 调用，建议先确认 agent-memory-system 支持）
+  enable_graph_memory: false       # 图谱记忆（实体关系抽取，依赖 agent-memory-system graph 模块）
+  enable_memory_sync: false        # 统一双写（本地缓存+远程权威源，建议最后开启）
+  enable_deep_pdf_parse: false  # 深度 PDF 解析（pdfplumber 文本+表格提取）
+  enable_ocr: false             # 扫描型 PDF OCR 回退（视觉模型）

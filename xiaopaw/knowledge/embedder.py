@@ -9,6 +9,7 @@ between the vectors it stores and the queries it embeds.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from functools import cache
 
@@ -18,6 +19,14 @@ EMBED_MODEL = "qwen3.7-text-embedding"
 EMBED_DIM = 1024
 _BATCH_SIZE = 16
 _DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+# Embedding cache: SHA256(text)[:16] -> vector
+_embed_cache: dict[str, list[float]] = {}
+_EMBED_CACHE_MAX = 10000
+
+
+def _cache_key(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
 class EmbeddingError(RuntimeError):
@@ -60,25 +69,58 @@ def embed_texts(texts: list[str], *, batch_size: int = _BATCH_SIZE) -> list[list
     if not texts:
         return []
 
-    client = _get_embed_client()
-    if client is None:
-        raise EmbeddingError("embedding client unavailable (openai package / API key missing)")
+    # Check cache
+    results: list[list[float] | None] = [None] * len(texts)
+    uncached_indices: list[int] = []
+    uncached_texts: list[str] = []
 
-    vectors: list[list[float]] = []
-    for start in range(0, len(texts), batch_size):
-        batch = texts[start : start + batch_size]
-        resp = client.embeddings.create(model=EMBED_MODEL, input=batch, dimensions=EMBED_DIM)
-        # OpenAI SDK returns data in request order, but sort defensively by index.
-        ordered = sorted(resp.data, key=lambda d: d.index)
-        vectors.extend([d.embedding for d in ordered])
+    for i, text in enumerate(texts):
+        key = _cache_key(text)
+        cached = _embed_cache.get(key)
+        if cached is not None:
+            results[i] = cached
+        else:
+            uncached_indices.append(i)
+            uncached_texts.append(text)
 
-    if len(vectors) != len(texts):
-        raise EmbeddingError(
-            f"embedding count mismatch: got {len(vectors)} for {len(texts)} inputs"
-        )
-    return vectors
+    # Fetch uncached texts via API
+    if uncached_texts:
+        client = _get_embed_client()
+        if client is None:
+            raise EmbeddingError("embedding client unavailable (openai package / API key missing)")
+
+        new_vectors: list[list[float]] = []
+        for start in range(0, len(uncached_texts), batch_size):
+            batch = uncached_texts[start : start + batch_size]
+            resp = client.embeddings.create(model=EMBED_MODEL, input=batch, dimensions=EMBED_DIM)
+            # OpenAI SDK returns data in request order, but sort defensively by index.
+            ordered = sorted(resp.data, key=lambda d: d.index)
+            new_vectors.extend([d.embedding for d in ordered])
+
+        # Fill results and update cache
+        for idx, vec in zip(uncached_indices, new_vectors):
+            results[idx] = vec
+            if len(_embed_cache) < _EMBED_CACHE_MAX:
+                _embed_cache[_cache_key(texts[idx])] = vec
+
+    return [r for r in results]  # type: ignore[misc]
+
+
+_query_cache: dict[str, list[float]] = {}
+_QUERY_CACHE_MAX = 500
 
 
 def embed_query(text: str) -> list[float]:
-    """Embed a single query string."""
-    return embed_texts([text])[0]
+    """Embed a single query string with LRU cache."""
+    key = _cache_key(text)
+    cached = _query_cache.get(key)
+    if cached is not None:
+        return cached
+    result = embed_texts([text])[0]
+    if len(_query_cache) >= _QUERY_CACHE_MAX:
+        # Evict half the cache
+        keys = list(_query_cache.keys())
+        for k in keys[: len(keys) // 2]:
+            del _query_cache[k]
+    _query_cache[key] = result
+    return result

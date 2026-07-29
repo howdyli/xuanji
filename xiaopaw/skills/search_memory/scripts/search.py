@@ -32,10 +32,24 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY") or os.getenv("QWEN_API_KEY", ""
 EMBED_MODEL  = "text-embedding-v3"
 EMBED_DIM    = 1024
 
-_embed_client = OpenAI(
-    api_key  = DEEPSEEK_API_KEY,
-    base_url = os.getenv("DEEPSEEK_BASE_URL") or os.getenv("QWEN_BASE_URL", "https://api.deepseek.com/v1"),
-)
+_embed_client = None
+_EMBED_WARNED = False
+
+def get_embed_client():
+    """获取嵌入客户端（惰性初始化），API Key 为空时返回 None。"""
+    global _embed_client, _EMBED_WARNED
+    if _embed_client is None:
+        if not DEEPSEEK_API_KEY:
+            if not _EMBED_WARNED:
+                print("[WARN] 未配置嵌入 API Key（DEEPSEEK_API_KEY / QWEN_API_KEY），向量搜索降级为纯文本检索",
+                      file=sys.stderr)
+                _EMBED_WARNED = True
+            return None
+        _embed_client = OpenAI(
+            api_key  = DEEPSEEK_API_KEY,
+            base_url = os.getenv("DEEPSEEK_BASE_URL") or os.getenv("QWEN_BASE_URL", "https://api.deepseek.com/v1"),
+        )
+    return _embed_client
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -43,7 +57,10 @@ _embed_client = OpenAI(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def embed_query(query: str) -> list[float]:
-    resp = _embed_client.embeddings.create(
+    client = get_embed_client()
+    if client is None:
+        return []  # API Key 未配置，返回空向量，后续查询将跳过向量部分
+    resp = client.embeddings.create(
         model      = EMBED_MODEL,
         input      = [query],
         dimensions = EMBED_DIM,
@@ -89,13 +106,20 @@ def search(
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
+    query_vec = embed_query(query)
+    has_vector = bool(query_vec)  # API Key 未配置时返回空列表
+
     results = []
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
 
+        if mode == "vector" and not has_vector:
+            # ── 向量模式但无 API Key → 降级为全文搜索 ────────────────────────
+            print("[WARN] 向量搜索不可用（无 API Key），降级为全文搜索", file=sys.stderr)
+            mode = "fulltext"
+
         if mode == "vector":
             # ── 纯向量搜索 ────────────────────────────────────────────────────
-            query_vec = embed_query(query)
             params["query_vec"] = str(query_vec)
             params["limit"]     = limit
             cur.execute(
@@ -135,29 +159,47 @@ def search(
 
         else:
             # ── 混合搜索（推荐）：向量 × 0.7 + 全文 × 0.3 ────────────────────
-            # 💡 核心点：OR 联合召回，再按混合得分排序，兼顾语义和精确匹配
-            query_vec = embed_query(query)
-            params["query_vec"] = str(query_vec)
-            params["tsquery"]   = query
-            params["limit"]     = limit
-            cur.execute(
-                f"""
-                SELECT
-                    id, summary, user_message, assistant_reply, tags,
-                    created_at, turn_ts,
-                    (
-                        0.7 * (1 - (summary_vec <=> %(query_vec)s::vector))
-                        + 0.3 * ts_rank(search_tsv, plainto_tsquery('simple', %(tsquery)s))
-                    ) AS score
-                FROM memories
-                {where_sql}
-                -- 💡 核心点：对全表同时计算向量得分和全文得分，加权求和后排序
-                -- 向量得分兜底语义相关，全文得分加权精确匹配，两者互补
-                ORDER BY score DESC
-                LIMIT %(limit)s
-                """,
-                params,
-            )
+            if not has_vector:
+                # 无 API Key 时混合搜索降级为纯全文搜索
+                print("[WARN] 混合搜索不可用（无 API Key），降级为全文搜索", file=sys.stderr)
+                params["tsquery"] = query
+                params["limit"]   = limit
+                cur.execute(
+                    f"""
+                    SELECT
+                        id, summary, user_message, assistant_reply, tags,
+                        created_at, turn_ts,
+                        ts_rank(search_tsv, plainto_tsquery('simple', %(tsquery)s)) AS score
+                    FROM memories
+                    {where_sql}
+                    {"AND" if where_clauses else "WHERE"} search_tsv @@ plainto_tsquery('simple', %(tsquery)s)
+                    ORDER BY score DESC
+                    LIMIT %(limit)s
+                    """,
+                    params,
+                )
+            else:
+                params["query_vec"] = str(query_vec)
+                params["tsquery"]   = query
+                params["limit"]     = limit
+                cur.execute(
+                    f"""
+                    SELECT
+                        id, summary, user_message, assistant_reply, tags,
+                        created_at, turn_ts,
+                        (
+                            0.7 * (1 - (summary_vec <=> %(query_vec)s::vector))
+                            + 0.3 * ts_rank(search_tsv, plainto_tsquery('simple', %(tsquery)s))
+                        ) AS score
+                    FROM memories
+                    {where_sql}
+                    -- 💡 核心点：对全表同时计算向量得分和全文得分，加权求和后排序
+                    -- 向量得分兜底语义相关，全文得分加权精确匹配，两者互补
+                    ORDER BY score DESC
+                    LIMIT %(limit)s
+                    """,
+                    params,
+                )
             results = [dict(r) for r in cur.fetchall()]
 
     conn.close()

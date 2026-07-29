@@ -39,3 +39,18 @@ class FeatureFlags(BaseModel):
     # Phase 5：结构化记忆表（Tables）工具。需同时开启
     # enable_remote_memory；默认关闭，灰度验证 AC 后再默认开启。
     enable_structured_tables: bool = False
+    # Phase C1：图谱记忆（实体关系抽取与查询）。需同时开启
+    # enable_remote_memory；默认关闭。
+    enable_graph_memory: bool = False
+    # Phase C2：统一双写（本地缓存 + 远程权威源）。需同时开启
+    # enable_remote_memory；默认关闭。
+    enable_memory_sync: bool = False
+    # Phase A：LLM 驱动的结构化记忆抽取。需同时开启
+    # enable_remote_memory；默认关闭。
+    enable_memory_extraction: bool = False
+    # Phase A：记忆生命周期管理（衰减/冷标记/清理）。需同时开启
+    # enable_remote_memory；默认关闭。
+    enable_memory_lifecycle: bool = False
+    # Phase B1：三层分层召回（Profile→语义→实体展开）。需同时开启
+    # enable_remote_memory；默认关闭。
+    enable_layered_recall: bool = False

@@ -135,11 +135,15 @@ def build_direct_answer_fn(max_history_turns: int = 10):
         # 旁路轮次同样落长期记忆（fire-and-forget，与 main_crew 一致），
         # 否则简单对话中的重要事实（如过敏、称呼）会随会话丢失
         if remote_memory_store.is_enabled and reply:
+            # Phase A3: 根据用户消息简单分类 fragment_type
+            from xiaopaw.memory.indexer import _classify_fragment_type
+            fragment_type = _classify_fragment_type([{"role": "user", "content": user_message}])
             remote_memory_store.save_turn_background(
                 session_id=session_id,
                 routing_key=routing_key,
                 user_message=user_message,
                 assistant_reply=reply,
+                fragment_type=fragment_type,
             )
         return reply, []
 

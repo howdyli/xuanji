@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from xiaopaw.knowledge.adapters import AdapterError, DocumentSource, get_adapter
 from xiaopaw.knowledge.chunker import chunk_text
@@ -19,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 # Keep references so tasks are not garbage-collected mid-flight.
 _INFLIGHT: set[asyncio.Task] = set()
+
+_INGEST_SEMAPHORE = asyncio.Semaphore(3)
+_INGEST_TIMEOUT = 300  # 5 minutes
 
 
 def _ingest_sync(store, doc_id: str) -> None:
@@ -39,8 +43,9 @@ def _ingest_sync(store, doc_id: str) -> None:
         result = get_adapter(source).extract(source)
 
         chunk_rows: list[dict] = []
+        strategy = os.environ.get("XIAOPAW_CHUNK_STRATEGY", "recursive")
         for section in result.sections:
-            for ch in chunk_text(section.text, base_locator=section.locator):
+            for ch in chunk_text(section.text, strategy=strategy, base_locator=section.locator):
                 chunk_rows.append(
                     {
                         "chunk_index": len(chunk_rows),
@@ -66,8 +71,18 @@ def _ingest_sync(store, doc_id: str) -> None:
 
 
 async def ingest_document(store, doc_id: str) -> None:
-    """Ingest one document, offloading blocking work to a thread."""
-    await asyncio.to_thread(_ingest_sync, store, doc_id)
+    """Ingest one document with concurrency control and timeout."""
+    async with _INGEST_SEMAPHORE:
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(_ingest_sync, store, doc_id),
+                timeout=_INGEST_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.error("ingest: document %s timed out after %ds", doc_id, _INGEST_TIMEOUT)
+            store.set_document_status(
+                doc_id, "failed", error_msg=f"ingestion timed out after {_INGEST_TIMEOUT}s"
+            )
 
 
 def schedule_ingest(store, doc_id: str) -> None:
