@@ -412,4 +412,7 @@ CREATE INDEX IF NOT EXISTS idx_skb_session ON session_knowledge_bases (session_i
 -- ============================================================
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS importance_score REAL DEFAULT 0.4;
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS fragment_type TEXT DEFAULT 'info';
+-- Phase C2 双写一致性：远程写入失败时置 FALSE，由 full_sync 补偿推送后置回 TRUE
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS remote_synced BOOLEAN NOT NULL DEFAULT TRUE;
+CREATE INDEX IF NOT EXISTS idx_memories_pending_sync ON memories (remote_synced) WHERE remote_synced = FALSE;
 

@@ -32,6 +32,14 @@ _IMPORTANT_PATTERN = re.compile(r"记住|我是|我的|以后|我喜欢|我不�
 # FR-6 每 N 次读写操作输出一行计数汇总日志
 _STATS_LOG_EVERY = 100
 
+# P3 差异化 TTL 策略：按 fragment_type 设置不同半衰期
+# info = 永久（TTL=None），plan = 90 天，preference = 180 天
+_FRAGMENT_TTL_DAYS: dict[str, int | None] = {
+    "info": None,          # 永久：事实性信息不过期
+    "plan": 90,            # 计划类 90 天
+    "preference": 180,     # 用户偏好 180 天（较持久）
+}
+
 
 class RemoteMemoryStore:
     """agent-memory-system 异步客户端封装（进程级单例使用）。"""
@@ -137,7 +145,8 @@ class RemoteMemoryStore:
             logger.info(
                 "remote memory stats: recall %d/%d hit, save %d total / %d failed, "
                 "table write %d total / %d failed, layered recall %d total / %d failed / %d fallback, "
-                "graph query %d total / %d failed, graph ingest %d total / %d failed",
+                "graph query %d total / %d failed, graph ingest %d total / %d failed, "
+                "extraction %d total / %d failed, lifecycle %d total / %d failed, conflict %d total / %d failed",
                 self._stats["recall_hit"], self._stats["recall_total"],
                 self._stats["save_total"], self._stats["save_failed"],
                 self._stats["table_write_total"], self._stats["table_write_failed"],
@@ -145,6 +154,9 @@ class RemoteMemoryStore:
                 self._stats["recall_layered_fallback"],
                 self._stats["graph_query_total"], self._stats["graph_query_failed"],
                 self._stats["graph_ingest_total"], self._stats["graph_ingest_failed"],
+                self._stats["extraction_total"], self._stats["extraction_failed"],
+                self._stats["lifecycle_total"], self._stats["lifecycle_failed"],
+                self._stats["conflict_total"], self._stats["conflict_failed"],
             )
 
     def stats(self) -> dict:
@@ -436,21 +448,26 @@ class RemoteMemoryStore:
         summary: str = "",
         fragment_type: str = "info",
         importance: float | None = None,
-    ) -> None:
+    ) -> bool:
         """把一轮对话写为记忆片段。任何失败只记日志，不向上抛。
 
         fragment_type: 记忆类型（info / preference / plan）。
         importance: 显式 importance 分；None 时使用启发式打分。
+
+        Returns:
+            True 写入成功；False 表示禁用/超时/失败（供 memory_sync
+            双写路径判断远程结果，其余 fire-and-forget 调用方可忽略）。
         """
         client = self._get_client()
         if client is None:
-            return
+            return False
         # FR-4 摘要优先级：调用方提供 > LLM 一句话摘要 > 原文拼接回退
         content = summary.strip() or await self._summarize_turn(user_message, assistant_reply) or (
             f"用户：{user_message[:500]}\n助手：{assistant_reply[:1000]}"
         )
-        # FR-3 生命周期：TTL（秒，0 天 = 永久→None）+ 启发式 importance
-        ttl_seconds = self._fragment_ttl_days * 86400 or None
+        # FR-3 生命周期：差异化 TTL（按 fragment_type）+ 启发式 importance
+        ttl_days = _FRAGMENT_TTL_DAYS.get(fragment_type, self._fragment_ttl_days)
+        ttl_seconds = ttl_days * 86400 if ttl_days else None
         score = importance if importance is not None else self._score_importance(user_message)
         self._bump("save_total")
         try:
@@ -470,12 +487,44 @@ class RemoteMemoryStore:
                 timeout=self._timeout,
             )
             logger.info("remote memory saved turn for session %s (type=%s)", session_id, fragment_type)
+            return True
         except asyncio.TimeoutError:
             self._bump("save_failed")
             logger.warning("remote memory save_turn timed out (%.1fs)", self._timeout)
+            return False
         except Exception as exc:
             self._bump("save_failed")
             logger.warning("remote memory save_turn failed: %s", exc)
+            return False
+
+    async def list_fragments(
+        self,
+        *,
+        status: str = "active",
+        session_ids: list[str] | None = None,
+        limit: int = 1000,
+    ) -> list[dict]:
+        """拉取远程记忆片段列表（memory_sync 全量同步用）。失败返回空列表。"""
+        if not self._enabled:
+            return []
+        params: dict[str, str] = {"status": status, "limit": str(limit)}
+        if session_ids:
+            params["session_ids"] = ",".join(session_ids)
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=max(self._timeout, 60.0)) as http:
+                resp = await http.get(
+                    f"{self._base_url.rstrip('/')}/memory/fragments",
+                    params=params,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                )
+                resp.raise_for_status()
+                fragments = resp.json().get("fragments", [])
+                return fragments if isinstance(fragments, list) else []
+        except Exception as exc:
+            logger.warning("remote memory list_fragments failed: %s", exc)
+            return []
 
     def save_turn_background(
         self,
@@ -689,7 +738,7 @@ class RemoteMemoryStore:
         """调用 agent-memory-system 的 extraction API，从对话中抽取结构化记忆。
 
         流程：
-        1. 调用 POST {base_url}/memory/extraction/extract
+        1. 调用 POST {base_url}/memory/extraction/batch-extract
         2. 解析返回 {variables, facts, preferences, plans}
         3. 分类写入各类型记忆
         4. 返回统计 {extracted: N, saved: N, errors: [...]}
@@ -706,8 +755,8 @@ class RemoteMemoryStore:
             async with httpx.AsyncClient() as _client:
                 resp = await asyncio.wait_for(
                     _client.post(
-                        f"{self._base_url.rstrip('/')}/memory/extraction/extract",
-                        json={"session_id": session_id, "messages": messages},
+                        f"{self._base_url.rstrip('/')}/memory/extraction/batch-extract",
+                        json={"session_id": session_id, "conversation_history": messages},
                         headers={"Authorization": f"Bearer {self._api_key}"},
                         timeout=30.0,
                     ),
@@ -780,15 +829,18 @@ class RemoteMemoryStore:
         return {"extracted": extracted, "saved": saved, "errors": errors}
 
     async def _save_fragment(self, content: str, fragment_type: str) -> None:
-        """内部辅助：写入单条语义记忆片段。"""
+        """内部辅助：写入单条语义记忆片段（差异化 TTL）。"""
         client = self._get_client()
         if client is None:
             return
+        ttl_days = _FRAGMENT_TTL_DAYS.get(fragment_type, self._fragment_ttl_days)
+        ttl_seconds = ttl_days * 86400 if ttl_days else None
         await asyncio.wait_for(
             client.remember_fragment(
                 content=content[: self._max_save_length],
                 fragment_type=fragment_type,
                 importance_score=self._importance_default,
+                ttl=ttl_seconds,
             ),
             timeout=self._timeout,
         )
@@ -800,8 +852,8 @@ class RemoteMemoryStore:
     async def run_lifecycle_maintenance(self) -> dict:
         """调用生命周期维护 API。
 
-        POST {base_url}/memory/lifecycle/maintenance
-        返回 {marked_cold: N, soft_deleted: N, decayed: N}
+        POST {base_url}/memory/lifecycle/run-cleanup
+        返回 {success, ...} 含清理统计
         超时 60s，失败静默降级返回空统计。
         """
         empty = {"marked_cold": 0, "soft_deleted": 0, "decayed": 0}
@@ -814,7 +866,7 @@ class RemoteMemoryStore:
             async with httpx.AsyncClient() as _client:
                 resp = await asyncio.wait_for(
                     _client.post(
-                        f"{self._base_url.rstrip('/')}/memory/lifecycle/maintenance",
+                        f"{self._base_url.rstrip('/')}/memory/lifecycle/run-cleanup",
                         headers={"Authorization": f"Bearer {self._api_key}"},
                         timeout=60.0,
                     ),
@@ -840,8 +892,9 @@ class RemoteMemoryStore:
     async def detect_memory_conflicts(self) -> list[dict]:
         """调用冲突检测 API。
 
-        POST {base_url}/memory/lifecycle/conflicts
-        返回冲突对列表 [{id1, id2, reason}, ...]
+        POST {base_url}/memory/lifecycle/duplicates/find
+        body: {content, threshold, limit}
+        返回重复记忆对列表
         超时 30s，失败返回空列表。
         """
         if not self._enabled:
@@ -853,7 +906,8 @@ class RemoteMemoryStore:
             async with httpx.AsyncClient() as _client:
                 resp = await asyncio.wait_for(
                     _client.post(
-                        f"{self._base_url.rstrip('/')}/memory/lifecycle/conflicts",
+                        f"{self._base_url.rstrip('/')}/memory/lifecycle/duplicates/find",
+                        json={"content": "*", "threshold": 0.85, "limit": 20},
                         headers={"Authorization": f"Bearer {self._api_key}"},
                         timeout=30.0,
                     ),
@@ -866,7 +920,7 @@ class RemoteMemoryStore:
                 )
                 return []
             data = resp.json()
-            return data.get("conflicts", [])
+            return data.get("duplicates", data.get("conflicts", []))
         except asyncio.TimeoutError:
             logger.warning("conflict detection timed out (30s)")
             return []
@@ -881,7 +935,7 @@ class RemoteMemoryStore:
     async def graph_query(self, entity: str, *, depth: int = 2) -> list[dict]:
         """查询实体关联图谱。
 
-        1. 调用 GET {base_url}/memory/graph/query?entity={entity}&depth={depth}
+        1. 调用 GET {base_url}/memory/graph/query?q={entity}
         2. 返回 [{"entity": str, "relation": str, "target": str, "weight": float}, ...]
         3. 超时 10s，失败返回空列表
         4. 添加 _stats 计数：graph_query_total / graph_query_failed
@@ -896,7 +950,7 @@ class RemoteMemoryStore:
                 resp = await asyncio.wait_for(
                     _client.get(
                         f"{self._base_url.rstrip('/')}/memory/graph/query",
-                        params={"entity": entity.strip(), "depth": depth},
+                        params={"q": entity.strip()},
                         headers={"Authorization": f"Bearer {self._api_key}"},
                         timeout=10.0,
                     ),
@@ -933,8 +987,8 @@ class RemoteMemoryStore:
     async def graph_ingest(self, text: str, *, session_id: str | None = None) -> dict:
         """从文本中抽取实体和关系，写入图谱。
 
-        1. 调用 POST {base_url}/memory/graph/ingest
-           body: {"text": text, "session_id": session_id}
+        1. 调用 POST {base_url}/memory/graph/extract
+           body: {"text": text}
         2. 返回 {"entities_extracted": N, "relations_created": N}
         3. 超时 15s，失败返回空统计
         4. 添加 _stats 计数：graph_ingest_total / graph_ingest_failed
@@ -951,8 +1005,8 @@ class RemoteMemoryStore:
             async with httpx.AsyncClient() as _client:
                 resp = await asyncio.wait_for(
                     _client.post(
-                        f"{self._base_url.rstrip('/')}/memory/graph/ingest",
-                        json={"text": text, "session_id": session_id or ""},
+                        f"{self._base_url.rstrip('/')}/memory/graph/extract",
+                        json={"text": text},
                         headers={"Authorization": f"Bearer {self._api_key}"},
                         timeout=15.0,
                     ),
@@ -983,6 +1037,99 @@ class RemoteMemoryStore:
             logger.warning("graph_ingest API failed: %s", exc)
             self._bump("graph_ingest_failed")
             return empty
+
+    # ================================================================
+    # P3: 用户偏好变量化迁移（memory.md → Variables）
+    # ================================================================
+
+    async def migrate_preferences_to_variables(self, file_path: str) -> dict:
+        """读取 memory.md 中的偏好条目，对比现有 Variables，将缺失的补写入。
+
+        流程：
+        1. 读取远程 Variables 现有键集合
+        2. 解析 memory.md 中 ``## 用户重要事项`` 章节下的条目
+        3. 对每个条目生成 key，若 key 不在现有 Variables 中则写入
+
+        返回 {"migrated": N, "skipped_existing": N, "errors": [...]}。
+        """
+        result = {"migrated": 0, "skipped_existing": 0, "errors": []}
+        if not self._enabled:
+            return result
+
+        # 1. 读取现有 Variables 键集合
+        try:
+            existing_vars = await self.get_preferences()
+        except Exception as exc:
+            logger.warning("migrate_preferences: get_preferences failed: %s", exc)
+            existing_vars = {}
+        existing_keys = set(existing_vars.keys())
+
+        # 2. 读取并解析 memory.md
+        try:
+            from pathlib import Path as _Path
+            md = _Path(file_path)
+            if not md.exists():
+                logger.info("migrate_preferences: file not found: %s", file_path)
+                return result
+            text = md.read_text(encoding="utf-8")
+        except Exception as exc:
+            logger.warning("migrate_preferences: read file failed: %s", exc)
+            result["errors"].append(str(exc))
+            return result
+
+        # 提取 "## 用户重要事项" 章节内容
+        section_lines: list[str] = []
+        in_section = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("## ") and "用户重要事项" in stripped:
+                in_section = True
+                continue
+            if in_section:
+                if stripped.startswith("## "):
+                    break  # 下一个章节
+                if not stripped or stripped.startswith(">"):
+                    continue
+                section_lines.append(stripped)
+
+        if not section_lines:
+            logger.info("migrate_preferences: no preference entries found in %s", file_path)
+            return result
+
+        # 3. 逐行解析，对比现有 Variables，缺失的补写入
+        kv_pattern = re.compile(r"^[-*•]?\s*(.+?)[:=]\s*(.+)$")
+        for line in section_lines:
+            clean = re.sub(r"^[-*•]\s+", "", line).strip()
+            if not clean:
+                result["skipped_existing"] += 1
+                continue
+            m = kv_pattern.match(clean)
+            if m:
+                key, value = m.group(1).strip(), m.group(2).strip()
+            else:
+                key = clean[:20].rstrip("，。,. ")
+                value = clean
+
+            # 跳过已存在的 key
+            if key in existing_keys:
+                result["skipped_existing"] += 1
+                continue
+
+            try:
+                ok = await self.set_preference(key, value)
+                if ok:
+                    result["migrated"] += 1
+                    existing_keys.add(key)  # 防止同文件重复 key
+                else:
+                    result["errors"].append(f"set_preference({key}) returned False")
+            except Exception as exc:
+                result["errors"].append(f"set_preference({key}): {exc}")
+
+        logger.info(
+            "migrate_preferences complete: migrated=%d skipped_existing=%d errors=%d",
+            result["migrated"], result["skipped_existing"], len(result["errors"]),
+        )
+        return result
 
     # ================================================================
     # 生命周期

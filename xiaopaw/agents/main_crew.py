@@ -34,7 +34,7 @@ from xiaopaw.memory.context_mgmt import (
     prune_tool_results,
     save_session_ctx_async,
 )
-from xiaopaw.memory.indexer import async_index_turn
+from xiaopaw.memory.indexer import async_index_turn, _classify_fragment_type
 from xiaopaw.memory.remote_memory import remote_memory_store
 from xiaopaw.models import SenderProtocol
 from xiaopaw.session.models import MessageEntry
@@ -486,10 +486,26 @@ class MemoryAwareCrew:
             except Exception:
                 reply = str(result.raw) if result.raw else str(result)
 
-            if self._db_dsn and getattr(self._flags, "enable_pgvector_indexing", True):
+            # Phase C2：统一双写生效时本地写入由 write_through 负责，
+            # 跳过独立索引任务，避免并发双写抢先落库后吞掉 pending_sync 标记
+            memory_sync_active = (
+                getattr(self._flags, "enable_remote_memory", False)
+                and getattr(self._flags, "enable_memory_sync", False)
+            )
+            # P3: 提前计算 fragment_type，供 pgvector 索引和远程记忆双写共用
+            _conv_msgs = [
+                {"role": "user", "content": self.user_message},
+                {"role": "assistant", "content": reply},
+            ]
+            _frag_type = _classify_fragment_type(_conv_msgs)
+            if (
+                self._db_dsn
+                and getattr(self._flags, "enable_pgvector_indexing", True)
+                and not memory_sync_active
+            ):
                 # Phase 4 FR-5：修复存量 bug —— 旧代码把 coroutine 赋给
                 # self._index_coroutine 但从未调度（never awaited），pgvector
-                # 写入实际从未执行。现改为 create_task 真正后台执行，并受
+                # 写入实际从未执行。现改为 create_task 真正后台运行，并受
                 # enable_pgvector_indexing 开关控制（双写观察期后置 false 下线）。
                 index_task = asyncio.get_running_loop().create_task(
                     async_index_turn(
@@ -499,10 +515,8 @@ class MemoryAwareCrew:
                         assistant_reply=reply,
                         turn_ts=self._turn_start_ts,
                         db_dsn=self._db_dsn,
-                        messages=[
-                            {"role": "user", "content": self.user_message},
-                            {"role": "assistant", "content": reply},
-                        ],
+                        messages=_conv_msgs,
+                        fragment_type=_frag_type,
                     )
                 )
                 self._index_tasks.add(index_task)
@@ -512,8 +526,9 @@ class MemoryAwareCrew:
             if getattr(self._flags, "enable_remote_memory", False):
                 # Phase C2: 统一双写（enable_memory_sync 门控）
                 if getattr(self._flags, "enable_memory_sync", False):
-                    from xiaopaw.memory.memory_sync import MemorySyncManager
-                    sync_mgr = MemorySyncManager(remote_memory_store, self._db_dsn)
+                    from xiaopaw.memory.memory_sync import get_sync_manager
+                    # 进程级单例：保证 full_sync 锁跨回合互斥
+                    sync_mgr = get_sync_manager(remote_memory_store, self._db_dsn)
                     sync_task = asyncio.get_running_loop().create_task(
                         sync_mgr.write_through(
                             session_id=self.session_id,
@@ -521,6 +536,7 @@ class MemoryAwareCrew:
                             user_message=self.user_message,
                             assistant_reply=reply,
                             turn_ts=self._turn_start_ts,
+                            fragment_type=_frag_type,
                         )
                     )
                     self._index_tasks.add(sync_task)
@@ -534,6 +550,7 @@ class MemoryAwareCrew:
                     extract_task = asyncio.get_running_loop().create_task(
                         self._extract_or_fallback(
                             self.session_id, messages_for_extraction, reply,
+                            fragment_type=_frag_type,
                         )
                     )
                     self._index_tasks.add(extract_task)
@@ -544,6 +561,7 @@ class MemoryAwareCrew:
                         routing_key=self.routing_key,
                         user_message=self.user_message,
                         assistant_reply=reply,
+                        fragment_type=_frag_type,
                     )
 
             # Phase C1: 图谱摄取（fire-and-forget，需同时开启 remote_memory + graph_memory）
@@ -582,6 +600,7 @@ class MemoryAwareCrew:
 
     async def _extract_or_fallback(
         self, session_id: str, messages: list[dict], reply: str,
+        *, fragment_type: str = "info",
     ) -> None:
         """Phase A1: 调用 extract_and_save，失败时降级到 save_turn_background。"""
         try:
@@ -597,6 +616,7 @@ class MemoryAwareCrew:
                     routing_key=self.routing_key,
                     user_message=self.user_message,
                     assistant_reply=reply,
+                    fragment_type=fragment_type,
                 )
         except Exception as exc:
             logger.warning("extract_or_fallback failed, falling back: %s", exc)
@@ -605,6 +625,7 @@ class MemoryAwareCrew:
                 routing_key=self.routing_key,
                 user_message=self.user_message,
                 assistant_reply=reply,
+                fragment_type=fragment_type,
             )
 
     @staticmethod
@@ -682,6 +703,32 @@ def build_agent_fn(
             user_preferences = await remote_memory_store.get_preferences(
                 routing_key=routing_key
             )
+
+            # Phase C1: 图谱查询 —— 召回阶段查询实体关系，注入 prompt 上下文
+            if getattr(flags, "enable_graph_query", False):
+                try:
+                    graph_results = await remote_memory_store.graph_query(
+                        entity=user_message, depth=2,
+                    )
+                    if graph_results:
+                        graph_lines = []
+                        for rel in graph_results:
+                            graph_lines.append(
+                                f"- {rel.get('entity', '')} → {rel.get('relation', '')} → {rel.get('target', '')}"
+                            )
+                        graph_text = "\n".join(graph_lines)
+                        recalled_memory += (
+                            "\n\n<graph_knowledge>\n"
+                            "以下为用户消息中实体的图谱关联信息：\n"
+                            f"{graph_text}\n"
+                            "</graph_knowledge>"
+                        )
+                        logger.info(
+                            "graph_query returned %d relations for session %s",
+                            len(graph_results), session_id,
+                        )
+                except Exception as exc:
+                    logger.warning("graph_query in recall phase failed (degraded): %s", exc)
 
         crew_instance = MemoryAwareCrew(
             session_id=session_id,

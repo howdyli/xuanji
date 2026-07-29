@@ -137,8 +137,19 @@ async def async_index_turn(
     turn_ts: int,
     db_dsn: str,
     messages: list[dict] | None = None,
+    content_id: str | None = None,
+    remote_synced: bool = True,
+    fragment_type: str | None = None,
 ) -> None:
-    """Extract summary, embed, and upsert into pgvector. Fire-and-forget safe."""
+    """Extract summary, embed, and upsert into pgvector. Fire-and-forget safe.
+
+    content_id: 显式主键（memory_sync 全量同步用远程片段 id，避免
+        created_ts 缺失时 hash 碰撞）；None 时按 session_id+turn_ts 计算。
+    remote_synced: 双写一致性标记；远程写入失败时传 False，
+        由 memory_sync.full_sync 后续补偿推送。
+    fragment_type: P3 差异化 TTL —— 调用方显式传入时优先使用，
+        否则根据消息内容自动分类（info / plan / preference）。
+    """
     if not db_dsn:
         return
 
@@ -147,7 +158,18 @@ async def async_index_turn(
         return
 
     try:
-        content_id = _content_hash(session_id, turn_ts)
+        content_id = content_id or _content_hash(session_id, turn_ts)
+
+        # 先查重：已存在则直接返回，避免重复消耗 LLM 总结/embedding 调用
+        import psycopg2
+        conn = psycopg2.connect(db_dsn)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM memories WHERE id = %s", (content_id,))
+                if cur.fetchone() is not None:
+                    return
+        finally:
+            conn.close()
 
         # ✅ P2-1: 优先使用 ModelRouter 选择 memory_indexing 任务模型
         try:
@@ -181,12 +203,14 @@ async def async_index_turn(
 
         search_text = f"{user_message} {summary}"
 
-        # Phase A3: 根据消息内容分类 fragment_type
-        if messages:
-            fragment_type = _classify_fragment_type(messages)
+        # Phase A3: 根据消息内容分类 fragment_type（调用方显式传入时优先）
+        if fragment_type:
+            final_fragment_type = fragment_type
+        elif messages:
+            final_fragment_type = _classify_fragment_type(messages)
         else:
             # 回退：用 user_message 单条分类
-            fragment_type = _classify_fragment_type([{"role": "user", "content": user_message}])
+            final_fragment_type = _classify_fragment_type([{"role": "user", "content": user_message}])
 
         # Phase B2: 使用 v2 多因子评分计算 importance_score
         importance_score = _score_importance_v2(summary or user_message)
@@ -199,15 +223,15 @@ async def async_index_turn(
                     """INSERT INTO memories
                        (id, session_id, routing_key, user_message, assistant_reply,
                         summary, tags, turn_ts, summary_vec, message_vec, search_text,
-                        fragment_type, importance_score)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        fragment_type, importance_score, remote_synced)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                        ON CONFLICT (id) DO NOTHING""",
                     (
                         content_id, session_id, routing_key,
                         user_message, assistant_reply[:2000],
                         summary, [], turn_ts,
                         str(summary_vec), str(message_vec), search_text,
-                        fragment_type, importance_score,
+                        final_fragment_type, importance_score, remote_synced,
                     ),
                 )
             conn.commit()
