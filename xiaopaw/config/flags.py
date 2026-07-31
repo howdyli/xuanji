@@ -31,26 +31,30 @@ class FeatureFlags(BaseModel):
     # 远程长期记忆（agent-memory-system SDK 对接）。开启后每轮对话双写
     # 记忆片段到记忆服务，并在推理前召回注入长期记忆上下文。
     # 默认关闭；关闭时行为与现状完全一致（仅 pgvector 索引路径）。
-    enable_remote_memory: bool = False
+    enable_remote_memory: bool = True
     # Phase 4 FR-5：pgvector 旧索引路径下线开关。双写观察期内保持
     # true（修复后的调度生效）；观察期结束后置 false 切断写入，
     # 一个版本周期无回退诉求后物理删除旧代码。
     enable_pgvector_indexing: bool = True
     # Phase 5：结构化记忆表（Tables）工具。需同时开启
     # enable_remote_memory；默认关闭，灰度验证 AC 后再默认开启。
-    enable_structured_tables: bool = False
+    enable_structured_tables: bool = True
     # Phase C1：图谱记忆（实体关系抽取与查询）。需同时开启
     # enable_remote_memory；默认关闭。
-    enable_graph_memory: bool = False
+    enable_graph_memory: bool = True
     # Phase C2：统一双写（本地缓存 + 远程权威源）。需同时开启
     # enable_remote_memory；默认关闭。
-    enable_memory_sync: bool = False
+    enable_memory_sync: bool = True
     # Phase A：LLM 驱动的结构化记忆抽取。需同时开启
     # enable_remote_memory；默认关闭。
-    enable_memory_extraction: bool = False
-    # Phase A：记忆生命周期管理（衰减/冷标记/清理）。需同时开启
-    # enable_remote_memory；默认关闭。
-    enable_memory_lifecycle: bool = False
+    enable_memory_extraction: bool = True
+    # 【已废弃】Phase A 生命周期定时调度已下线：治理（衰减/清理/冲突
+    # 检测）上收 agent-memory-system 服务端调度器，本 flag 不再被读取，
+    # 仅为兼容旧配置保留。
+    enable_memory_lifecycle: bool = True
     # Phase B1：三层分层召回（Profile→语义→实体展开）。需同时开启
     # enable_remote_memory；默认关闭。
-    enable_layered_recall: bool = False
+    enable_layered_recall: bool = True
+    # 图谱查询：召回阶段查询实体关系注入 prompt。需同时开启
+    # enable_remote_memory；默认关闭。
+    enable_graph_query: bool = True

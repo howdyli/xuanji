@@ -252,6 +252,8 @@ async def main() -> None:
     # 远程长期记忆（agent-memory-system SDK）：flag 关闭或配置缺失时保持禁用
     from xiaopaw.memory.remote_memory import remote_memory_store
     remote_memory_store.init_from_config(cfg.memory, cfg.feature_flags)
+    # 启动时一次性连通性/API Key 自检（异步，失败只记日志不阻塞启动）
+    remote_memory_store.schedule_startup_check()
 
     # P3: 启动时一次性偏好迁移（memory.md “用户重要事项” → Variables，仅补缺）
     if remote_memory_store.is_enabled:
@@ -492,66 +494,9 @@ async def main() -> None:
         else:
             logger.warning("CommunityRegistry missing background task methods, skipping community tasks")
 
-    # Phase A2: 记忆生命周期维护后台任务（定期清理过期记忆 + 冲突检测）
-    # P3 优化：生命周期维护每 6 小时，冲突检测每 24 小时（独立调度）
-    lifecycle_task: asyncio.Task | None = None
-    conflict_task: asyncio.Task | None = None
-    if (
-        getattr(cfg.feature_flags, "enable_remote_memory", False)
-        and getattr(cfg.feature_flags, "enable_memory_lifecycle", False)
-        and remote_memory_store.is_enabled
-    ):
-        async def _lifecycle_maintenance_loop() -> None:
-            await asyncio.sleep(60.0)  # 启动后延迟 60s 首次执行
-            interval = 6 * 3600.0  # 每 6 小时执行一次
-            while True:
-                try:
-                    result = await remote_memory_store.run_lifecycle_maintenance()
-                    logger.info(
-                        "lifecycle maintenance result: marked_cold=%s, soft_deleted=%s, decayed=%s",
-                        result.get("marked_cold", 0),
-                        result.get("soft_deleted", 0),
-                        result.get("decayed", 0),
-                    )
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.exception("lifecycle maintenance loop failed")
-                await asyncio.sleep(interval)
-
-        async def _conflict_detection_loop() -> None:
-            await asyncio.sleep(120.0)  # 启动后延迟 120s 首次执行（等 lifecycle 先跑完）
-            interval = 24 * 3600.0  # 每 24 小时执行一次
-            while True:
-                try:
-                    conflicts = await remote_memory_store.detect_memory_conflicts()
-                    if conflicts:
-                        logger.warning(
-                            "conflict detection found %d duplicate group(s): %s",
-                            len(conflicts),
-                            [
-                                {
-                                    "id": c.get("id", c.get("fragment_id", "?")),
-                                    "content_preview": str(c.get("content", ""))[:80],
-                                }
-                                for c in conflicts[:5]
-                            ],
-                        )
-                    else:
-                        logger.info("conflict detection completed: no duplicates found")
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.exception("conflict detection loop failed")
-                await asyncio.sleep(interval)
-
-        lifecycle_task = asyncio.create_task(
-            _lifecycle_maintenance_loop(), name="memory-lifecycle"
-        )
-        conflict_task = asyncio.create_task(
-            _conflict_detection_loop(), name="memory-conflict"
-        )
-        logger.info("memory lifecycle scheduled (interval=6h, conflict=24h)")
+    # Phase A2 已下线：记忆生命周期治理（run-cleanup / 冲突检测）上收
+    # agent-memory-system 服务端调度器，玄机侧不再定时触发；只读观测
+    # 能力见 remote_memory_store.get_lifecycle_stats() / get_resilience_status()。
 
     # Start TestAPI (dev only)
     test_api_runner = None
@@ -723,18 +668,6 @@ async def main() -> None:
         community_cleanup_task.cancel()
         try:
             await community_cleanup_task
-        except asyncio.CancelledError:
-            pass
-    if conflict_task is not None:
-        conflict_task.cancel()
-        try:
-            await conflict_task
-        except asyncio.CancelledError:
-            pass
-    if lifecycle_task is not None:
-        lifecycle_task.cancel()
-        try:
-            await lifecycle_task
         except asyncio.CancelledError:
             pass
     await runner.shutdown()
