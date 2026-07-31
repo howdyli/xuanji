@@ -68,6 +68,17 @@ class MemoryConfig(BaseModel):
     recall_top_k: int = Field(default=5, ge=1, le=20)
     # 召回注入的长期记忆最大字符数（防止挤占上下文窗口）
     recall_max_chars: int = Field(default=4000, ge=200, le=20000)
+    # G5 混合搜索召回（向量+BM25+实体+时间衰减融合）：多主题混合提问
+    # 召回质量优化；服务端 P99 约 800ms 高于普通召回，默认关闭。
+    # 失败/超时自动降级单路语义召回，对调用方透明。
+    enable_hybrid_search: bool = False
+    hybrid_search_timeout: float = Field(default=15.0, ge=1.0, le=120.0)
+    # 融合权重覆盖（alpha 语义 / beta BM25 / gamma 实体 / delta 时间衰减）；
+    # None = 不随请求传该字段，使用服务端默认权重
+    hybrid_alpha: float | None = Field(default=None, ge=0.0, le=1.0)
+    hybrid_beta: float | None = Field(default=None, ge=0.0, le=1.0)
+    hybrid_gamma: float | None = Field(default=None, ge=0.0, le=1.0)
+    hybrid_delta: float | None = Field(default=None, ge=0.0, le=1.0)
     # Phase 4 片段生命周期治理：普通对话片段 TTL（天）0 = 永久保存
     fragment_ttl_days: int = Field(default=90, ge=0, le=3650)
     # 启发式 importance 打分：命中显式陈述模式（记住/我是/以后…）用 high

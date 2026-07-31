@@ -35,9 +35,19 @@ memory:
   # base_url 必须包含 /api/v1 前缀；部署记忆服务见 pm/agent-memory-system/docker-compose.yml
   remote_base_url: "${AGENT_MEMORY_URL:-}"       # 如 http://localhost:8000/api/v1
   remote_api_key: "${AGENT_MEMORY_API_KEY:-}"    # 记忆系统 API Key（amk_xxx）
-  remote_timeout: 10.0
+  remote_timeout: 20.0  # 记忆后端冷查询（rerank+embedding）实测 7~15s，10s 会间歇超时降级
   recall_top_k: 5
   recall_max_chars: 4000
+  # G5 混合搜索召回（向量+BM25+实体+时间衰减融合）：适用于多主题混合提问
+  # 召回质量优化；服务端 P99 约 800ms 高于普通召回（500ms），默认关闭。
+  # 失败/超时自动降级单路语义召回，对调用方透明。
+  enable_hybrid_search: false
+  hybrid_search_timeout: 15.0  # 混合搜索独立超时预算（秒），不受 remote_timeout 影响
+  # 融合权重覆盖（不配置 = 用服务端默认权重）：
+  # hybrid_alpha: 0.5   # 语义相似度权重
+  # hybrid_beta: 0.3    # BM25 全文匹配权重
+  # hybrid_gamma: 0.1   # 实体重叠权重
+  # hybrid_delta: 0.1   # 时间衰减权重
 
 session:
   max_active_sessions: 1000
@@ -103,7 +113,14 @@ feature_flags:
   enable_webhook_replay_cache: true
   enable_inbound_rate_limit: true
   enable_remote_memory: true  # 远程长期记忆（agent-memory-system SDK 对接，需 配置 memory.remote_*）
+  enable_pgvector_indexing: true  # L21 本地向量索引（双写观察期保持开启；需 QWEN/DASHSCOPE Key 才能真正生效）
   enable_structured_tables: true  # Phase 5: 结构化记忆表工具（需同时开启 enable_remote_memory）
+  enable_graph_memory: true  # Phase C1: 图谱记忆（实体关系抽取与存储，需同时开启 enable_remote_memory）
+  enable_layered_recall: true  # Phase B1: 三层分层召回（Profile→语义→实体展开）
+  enable_memory_extraction: true  # Phase A1: LLM 驱动的结构化记忆抽取
+  enable_memory_lifecycle: true  # 【已废弃】生命周期定时调度已上收 AMS 服务端，玄机侧不再读取此开关
+  enable_memory_sync: true  # Phase C2: 统一双写（本地缓存 + 远程权威源）
+  enable_graph_query: true  # 图谱查询：召回阶段查询实体关系注入 prompt（需同时开启 enable_remote_memory）
 
 # ── P2-1 多模型路由配置 ────────────────────────────────────
 # 支持多个 AI 模型自动选择、负载均衡和故障转移

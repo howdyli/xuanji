@@ -45,7 +45,7 @@ export = [
 # 远程长期记忆（agent-memory-system）对接；本地开发安装：
 #   pip install -e ../pm/agent-memory-system/sdk-python
 remote-memory = [
-    "agent-memory-sdk>=0.1.0",
+    "agent-memory-sdk>=0.1.0,<0.2.0",  # 锁上界：_sdk_request 依赖 SDK 传输层私有接口，升级前需回归验证
 ]
 rerank = ["FlagEmbedding>=1.2", "sentence-transformers>=2.7"]
 ocr = ["pdfplumber>=0.11", "pytesseract>=0.3", "pdf2image>=1.17"]
