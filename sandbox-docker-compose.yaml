@@ -17,6 +17,9 @@
 # - 限制容器资源使用（内存/CPU）
 # - 移除不必要的默认功能
 
+# 独立 project 名：与 app-docker-compose.yaml（xiaopaw-app）分离，避免互判 orphan
+name: xiaopaw-sandbox
+
 services:
   aio-sandbox:
     # [v1.2] Pin by digest: `:latest` is a supply-chain risk and breaks

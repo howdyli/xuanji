@@ -337,7 +337,7 @@ export default function AgentTimeline({ sessionId, turnId, isPolling, authToken 
         </button>
 
         {expanded && (
-          <div className="px-4 pb-3 pt-1">
+          <div className="px-4 pb-3 pt-1 max-h-80 overflow-y-auto">
             {error && (
               <div className="text-[12px] text-red-500 mb-2">⚠️ {error}</div>
             )}
@@ -371,7 +371,7 @@ export default function AgentTimeline({ sessionId, turnId, isPolling, authToken 
       )}
 
       {activities.length > 0 ? (
-        <div>
+        <div className="max-h-80 overflow-y-auto">
           {activities.map((a, i) => (
             <TimelineItem key={`${a.created_at}-${i}`} activity={a} isLast={i === activities.length - 1} />
           ))}

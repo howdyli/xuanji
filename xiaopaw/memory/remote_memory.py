@@ -43,6 +43,9 @@ _FRAGMENT_TTL_DAYS: dict[str, int | None] = {
 # 分级错误处理：幂等读操作对 5xx/网络错误的指数退避间隔（秒）
 _RETRY_BACKOFFS = (0.5, 1.0)
 
+# 旧版 SDK（无公开 request()）回退私有传输层时，每进程只告警一次防刷屏。
+_SDK_TRANSPORT_FALLBACK_WARNED = False
+
 # 端点路径常量：统一维护，消除散落的字符串硬编码。
 # SDK 高层方法未覆盖（recall/auto、fragments 分页、resilience、health）
 # 或语义不满足的端点，经 httpx / SDK 传输层直连时引用。
@@ -494,20 +497,31 @@ class RemoteMemoryStore:
         raise asyncio.TimeoutError(f"{operation} retry budget exhausted")
 
     async def _sdk_request(self, method: str, path: str, **kwargs: Any) -> Any:
-        """经 SDK 传输层发起请求，返回已解析的响应体。
+        """经 SDK 公开 request() 透传；旧版 SDK 回退私有传输层。
 
         AsyncMemoryClient 的高层便捷方法内部吞异常且（部分）丢弃原始
         响应体，会令 _retry_read 重试、分级错误处理、失败计数与
-        _check_degraded 降级识别全部失效；故此类端点改走 SDK 传输层：
-        复用其鉴权头、/api/v1 前缀补齐、连接池与类型化异常
+        _check_degraded 降级识别全部失效；故此类端点改走 SDK 公开
+        request()（>=0.1.1 提供）：不吞异常、不改写响应体，复用其鉴权头、
+        /api/v1 前缀补齐、连接池与类型化异常
         （agent_memory.exceptions.HTTPError/TransportError）。
 
-        注意：_transport 是 SDK 私有接口（非公开契约），pyproject 已锁
-        版本上界 <0.2.0；升级 SDK 前需回归验证本方法及其调用点。
+        旧版 SDK（无公开 request()）回退 client._transport.request()，
+        并记一条 WARNING（每进程首次）提示升级。
         """
+        global _SDK_TRANSPORT_FALLBACK_WARNED
         client = self._get_client()
         if client is None:
             raise RuntimeError("remote memory SDK client unavailable")
+        req = getattr(client, "request", None)
+        if callable(req):
+            return await req(method, path, **kwargs)
+        if not _SDK_TRANSPORT_FALLBACK_WARNED:
+            _SDK_TRANSPORT_FALLBACK_WARNED = True
+            logger.warning(
+                "agent-memory-sdk 无公开 request()，回退私有传输层 _transport；"
+                "建议升级 agent-memory-sdk>=0.1.1"
+            )
         return await client._transport.request(method, path, **kwargs)
 
     # ================================================================

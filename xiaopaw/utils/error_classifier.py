@@ -237,6 +237,37 @@ def classify_exception(exc: Exception) -> ClassifiedError:
     exc_str = str(exc)
     exc_type = type(exc).__name__
 
+    # HTTP 异常携带 response（如 requests.HTTPError 经 raise_for_status 抛出）：
+    # 直接按状态码复用 classify_http_error，避免 402/401 等被归为 UNKNOWN
+    _response = getattr(exc, "response", None)
+    _status = getattr(_response, "status_code", None)
+    if isinstance(_status, int) and _status >= 400:
+        try:
+            _body = (_response.text or "")[:1000]
+        except Exception:
+            _body = ""
+        classified = classify_http_error(_status, _body, exc_str[:200])
+        return ClassifiedError(
+            code=classified.code,
+            status_code=classified.status_code,
+            message=classified.message,
+            retryable=classified.retryable,
+            original=exc,
+        )
+
+    # 余额不足语义兜底：异常文本如 "402 Client Error: Payment Required"
+    # 或 "Insufficient Balance"（response 丢失/被包装时仍能识别）
+    if re.search(r"402 Client Error|Payment Required", exc_str, re.I) or any(
+        p.search(exc_str) for p in _QUOTA_PATTERNS
+    ):
+        return ClassifiedError(
+            code=ErrorCode.QUOTA_EXCEEDED.value,
+            status_code=402,
+            message=f"API 余额不足: {exc_str[:200]}",
+            retryable=False,
+            original=exc,
+        )
+
     # 超时类
     if exc_type in ("TimeoutError", "Timeout", "ReadTimeout", "ConnectTimeout"):
         return ClassifiedError(

@@ -99,7 +99,7 @@ def _score_importance_v2(text: str) -> float:
 
 @cache
 def _get_llm_client():
-    """Singleton OpenAI-compatible client for embeddings + summarization."""
+    """Singleton OpenAI-compatible client for summarization."""
     try:
         from openai import OpenAI
         import os
@@ -109,6 +109,31 @@ def _get_llm_client():
         )
     except ImportError:
         logger.warning("openai package not installed, indexing disabled")
+        return None
+
+
+_embed_unavailable_warned = False
+
+
+@cache
+def _get_embedding_client():
+    """Singleton client for text-embedding-v3（DashScope/Qwen 专用）。
+
+    DeepSeek 没有 embeddings 端点，直接用 DeepSeek base_url 调
+    text-embedding-v3 会 404，因此 embedding 必须走 DashScope 兼容端点；
+    未配置 QWEN/DASHSCOPE Key 时返回 None，由调用方跳过向量索引。
+    """
+    try:
+        from openai import OpenAI
+        import os
+        api_key = os.environ.get("QWEN_API_KEY") or os.environ.get("DASHSCOPE_API_KEY", "")
+        if not api_key:
+            return None
+        return OpenAI(
+            api_key=api_key,
+            base_url=os.environ.get("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        )
+    except ImportError:
         return None
 
 
@@ -157,6 +182,17 @@ async def async_index_turn(
     if client is None:
         return
 
+    embed_client = _get_embedding_client()
+    if embed_client is None:
+        global _embed_unavailable_warned
+        if not _embed_unavailable_warned:
+            _embed_unavailable_warned = True
+            logger.warning(
+                "no embedding-capable API key (QWEN_API_KEY/DASHSCOPE_API_KEY); "
+                "L21 pgvector indexing skipped (remote memory is unaffected)"
+            )
+        return
+
     try:
         content_id = content_id or _content_hash(session_id, turn_ts)
 
@@ -193,7 +229,7 @@ async def async_index_turn(
         )
         summary = summary_resp.choices[0].message.content or ""
 
-        embed_resp = client.embeddings.create(
+        embed_resp = embed_client.embeddings.create(
             model="text-embedding-v3",
             input=[summary, user_message],
             dimensions=1024,

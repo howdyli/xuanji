@@ -724,19 +724,19 @@ class TestResponseFieldDefense:
 
 
 class TestSdkMigration:
-    """G7：graph/extraction 迁移 SDK 传输层后，第一阶段语义保持不变。"""
+    """G7：graph/extraction 经 SDK 公开 request() 透传后，第一阶段语义保持不变。"""
 
-    def _mock_transport(self, store, result=None, side_effect=None):
-        """用 mock SDK client 替换 _client：_sdk_request 走 _transport.request。"""
-        transport = SimpleNamespace(
+    def _mock_client(self, store, result=None, side_effect=None):
+        """用 mock SDK client 替换 _client：_sdk_request 走公开 client.request()。"""
+        client = SimpleNamespace(
             request=AsyncMock(return_value=result, side_effect=side_effect)
         )
-        store._client = SimpleNamespace(_transport=transport)
-        return transport
+        store._client = client
+        return client
 
     async def test_graph_query_success_normalizes_neighbors(self):
         store = _enabled_store()
-        transport = self._mock_transport(store, result={
+        client = self._mock_client(store, result={
             "neighbors": [
                 {"entity_name": "张三", "relation_type": "knows", "confidence": 0.9},
             ],
@@ -745,7 +745,7 @@ class TestSdkMigration:
         assert result == [
             {"entity": "张三", "relation": "knows", "target": "张三", "weight": 0.9},
         ]
-        args = transport.request.await_args
+        args = client.request.await_args
         assert args.args == ("GET", "/memory/graph/query")
         assert args.kwargs["params"] == {"q": "张三"}
 
@@ -753,12 +753,12 @@ class TestSdkMigration:
         from agent_memory import exceptions as sdk_exc
 
         store = _enabled_store()
-        transport = self._mock_transport(
+        client = self._mock_client(
             store, side_effect=sdk_exc.HTTPError(401, "Invalid or revoked API key")
         )
         with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
             assert await store.graph_query("张三") == []
-        assert transport.request.await_count == 1  # 4xx 不重试
+        assert client.request.await_count == 1  # 4xx 不重试
         assert store.stats()["graph_query_failed"] == 1
         errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
         assert any("401" in m and "Invalid or revoked API key" in m for m in errors)
@@ -768,17 +768,17 @@ class TestSdkMigration:
 
         monkeypatch.setattr(rm_module, "_RETRY_BACKOFFS", (0.01, 0.02))
         store = _enabled_store()
-        transport = self._mock_transport(store, side_effect=[
+        client = self._mock_client(store, side_effect=[
             sdk_exc.HTTPError(500, "boom"),
             {"neighbors": []},
         ])
         assert await store.graph_query("张三") == []
-        assert transport.request.await_count == 2
+        assert client.request.await_count == 2
         assert store.stats()["graph_query_failed"] == 0
 
     async def test_graph_query_non_list_neighbors_returns_empty(self, caplog):
         store = _enabled_store()
-        self._mock_transport(store, result={"neighbors": "oops"})
+        self._mock_client(store, result={"neighbors": "oops"})
         with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
             assert await store.graph_query("张三") == []
         assert store.stats()["graph_query_failed"] == 1
@@ -786,7 +786,7 @@ class TestSdkMigration:
 
     async def test_graph_query_skips_non_dict_neighbor(self, caplog):
         store = _enabled_store()
-        self._mock_transport(store, result={
+        self._mock_client(store, result={
             "neighbors": [
                 "bad-entry",
                 {"entity_name": "张三", "relation_type": "knows", "confidence": 0.9},
@@ -802,7 +802,7 @@ class TestSdkMigration:
 
     async def test_graph_ingest_degraded_signal_preserved(self, caplog):
         store = _enabled_store()
-        self._mock_transport(store, result={
+        self._mock_client(store, result={
             "degraded": True, "entities_extracted": 1, "relations_created": 0,
         })
         with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
@@ -814,7 +814,7 @@ class TestSdkMigration:
         from agent_memory import exceptions as sdk_exc
 
         store = _enabled_store()
-        self._mock_transport(store, side_effect=sdk_exc.HTTPError(503, "unavailable"))
+        self._mock_client(store, side_effect=sdk_exc.HTTPError(503, "unavailable"))
         with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
             result = await store.graph_ingest("张三认识李四")
         assert result == {"entities_extracted": 0, "relations_created": 0}
@@ -823,9 +823,9 @@ class TestSdkMigration:
             "server error: HTTP 503" in r.message for r in caplog.records
         )
 
-    async def test_extract_and_save_via_sdk_transport(self):
+    async def test_extract_and_save_via_sdk_request(self):
         store = _enabled_store()
-        transport = self._mock_transport(store, result={
+        client = self._mock_client(store, result={
             "variables": [{"key": "城市", "value": "杭州"}],
             "facts": ["用户住在杭州"],
             "preferences": [],
@@ -836,25 +836,48 @@ class TestSdkMigration:
         result = await store.extract_and_save("s1", [{"role": "user", "content": "hi"}])
         assert result["extracted"] == 2 and result["saved"] == 2
         assert result["errors"] == []
-        first = transport.request.await_args_list[0]
+        first = client.request.await_args_list[0]
         assert first.args == ("POST", "/memory/extraction/batch-extract")
         assert first.kwargs["json"]["session_id"] == "s1"
+
+    async def test_fallback_to_private_transport_when_no_public_request(
+        self, monkeypatch, caplog
+    ):
+        """旧版 SDK（无公开 request()）：回退 _transport.request 且首次告警。"""
+        monkeypatch.setattr(rm_module, "_SDK_TRANSPORT_FALLBACK_WARNED", False)
+        store = _enabled_store()
+        transport = SimpleNamespace(
+            request=AsyncMock(return_value={"neighbors": []})
+        )
+        store._client = SimpleNamespace(_transport=transport)
+        with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
+            assert await store.graph_query("张三") == []
+        assert transport.request.await_count == 1  # 确实走了私有传输层
+        assert any(
+            "回退私有传输层" in r.getMessage()
+            for r in caplog.records if r.levelno == logging.WARNING
+        )
+        # 每进程仅告警一次：二次调用不再重复
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
+            assert await store.graph_query("李四") == []
+        assert not any(
+            "回退私有传输层" in r.getMessage() for r in caplog.records
+        )
 
 
 class TestHybridRecall:
     """G5：混合搜索召回接入 + 失败自动降级单路语义召回。"""
 
     def _hybrid_store(self, result=None, side_effect=None, **cfg_overrides):
-        """开启混合搜索的 store + mock SDK 传输层 + 语义召回兜底。"""
+        """开启混合搜索的 store + mock 公开 request() + 语义召回兜底。"""
         store = _enabled_store(enable_hybrid_search=True, **cfg_overrides)
-        transport = SimpleNamespace(
-            request=AsyncMock(return_value=result, side_effect=side_effect)
-        )
-        store._client = SimpleNamespace(
-            _transport=transport,
+        client = SimpleNamespace(
+            request=AsyncMock(return_value=result, side_effect=side_effect),
             recall_context=AsyncMock(return_value="语义召回兜底"),
         )
-        return store, transport
+        store._client = client
+        return store, client
 
     async def test_flag_off_uses_semantic_path(self):
         store = _enabled_store()  # 默认 enable_hybrid_search=False
@@ -867,7 +890,7 @@ class TestHybridRecall:
         assert s["hybrid_total"] == 0 and s["recall_total"] == 1
 
     async def test_hybrid_success_returns_joined_context(self):
-        store, transport = self._hybrid_store(result={
+        store, client = self._hybrid_store(result={
             "success": True,
             "fragments": [
                 {"content": "用户住在杭州"},
@@ -877,7 +900,7 @@ class TestHybridRecall:
         })
         result = await store.recall("我住哪？晚饭吃什么？")
         assert result == "用户住在杭州\n喜欢羊肉面"
-        args = transport.request.await_args
+        args = client.request.await_args
         assert args.args == ("POST", "/memory/hybrid-search")
         payload = args.kwargs["json"]
         assert payload["query"] == "我住哪？晚饭吃什么？" and payload["top_k"] == 5
@@ -899,12 +922,12 @@ class TestHybridRecall:
     async def test_hybrid_4xx_falls_back_no_retry(self, caplog):
         from agent_memory import exceptions as sdk_exc
 
-        store, transport = self._hybrid_store(
+        store, client = self._hybrid_store(
             side_effect=sdk_exc.HTTPError(422, "bad request")
         )
         with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
             assert await store.recall("q") == "语义召回兜底"
-        assert transport.request.await_count == 1  # 4xx 不重试
+        assert client.request.await_count == 1  # 4xx 不重试
         s = store.stats()
         assert s["hybrid_failed"] == 1 and s["hybrid_fallback"] == 1
         assert s["recall_total"] == 1  # 降级路径计入单路召回计数
@@ -913,17 +936,17 @@ class TestHybridRecall:
         from agent_memory import exceptions as sdk_exc
 
         monkeypatch.setattr(rm_module, "_RETRY_BACKOFFS", (0.01,))
-        store, transport = self._hybrid_store(
+        store, client = self._hybrid_store(
             side_effect=sdk_exc.HTTPError(503, "down")
         )
         assert await store.recall("q") == "语义召回兜底"
-        assert transport.request.await_count == 2  # 1 次 + 1 次重试
+        assert client.request.await_count == 2  # 1 次 + 1 次重试
         s = store.stats()
         assert s["hybrid_failed"] == 1 and s["hybrid_fallback"] == 1
 
     async def test_hybrid_timeout_budget_independent_of_remote_timeout(self):
         # remote_timeout 故意小于请求耗时；混合搜索走独立预算仍成功
-        store, transport = self._hybrid_store(
+        store, client = self._hybrid_store(
             remote_timeout=0.05, hybrid_search_timeout=5.0,
         )
 
@@ -931,17 +954,17 @@ class TestHybridRecall:
             await asyncio.sleep(0.1)
             return {"fragments": [{"content": "命中"}]}
 
-        transport.request = AsyncMock(side_effect=_slow_ok)
+        client.request = AsyncMock(side_effect=_slow_ok)
         assert await store.recall("q") == "命中"
         assert store.stats()["hybrid_fallback"] == 0
 
     async def test_hybrid_timeout_falls_back(self):
-        store, transport = self._hybrid_store(hybrid_search_timeout=0.05)
+        store, client = self._hybrid_store(hybrid_search_timeout=0.05)
 
         async def _hang(*args, **kwargs):
             await asyncio.sleep(1.0)
 
-        transport.request = AsyncMock(side_effect=_hang)
+        client.request = AsyncMock(side_effect=_hang)
         assert await store.recall("q") == "语义召回兜底"
         s = store.stats()
         assert s["hybrid_failed"] == 1 and s["hybrid_fallback"] == 1
@@ -962,21 +985,21 @@ class TestHybridRecall:
         assert s["hybrid_failed"] == 0 and s["hybrid_fallback"] == 1
 
     async def test_weights_sent_only_when_configured(self):
-        store, transport = self._hybrid_store(
+        store, client = self._hybrid_store(
             result={"fragments": [{"content": "x"}]},
             hybrid_alpha=0.6, hybrid_delta=0.2,
         )
         await store.recall("q")
-        payload = transport.request.await_args.kwargs["json"]
+        payload = client.request.await_args.kwargs["json"]
         assert payload["alpha"] == 0.6 and payload["delta"] == 0.2
         assert "beta" not in payload and "gamma" not in payload
 
     async def test_weights_omitted_by_default(self):
-        store, transport = self._hybrid_store(
+        store, client = self._hybrid_store(
             result={"fragments": [{"content": "x"}]}
         )
         await store.recall("q")
-        payload = transport.request.await_args.kwargs["json"]
+        payload = client.request.await_args.kwargs["json"]
         assert not any(k in payload for k in ("alpha", "beta", "gamma", "delta"))
 
 

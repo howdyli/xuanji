@@ -72,7 +72,9 @@ _DANGEROUS_COMMANDS = re.compile(
     r"dd\s+if=|mkfs\b|shred\b|doas\b|pkexec\b|su\s+\w+|"
     r"pkill\b|killall\b|kill\s+-9\s|systemctl\b|service\b|"
     r"iptables\b|ufw\b|firewall-cmd\b|"        # 防火墙操作
-    r"crontab\s|-e\b|at\b|batch\b|"            # 定时任务
+    # 定时任务：只拦 crontab 编辑/装载。原写法 `-e\b|at\b|batch\b` 是独立分支，
+    # 会命中任意文本里的 "at"/"batch"/"-e"（如 heredoc 报告正文），误拦率极高。
+    r"crontab\s+(-e|-l|\S+\.cron)\b|"
     r"useradd\b|userdel\b|passwd\b\w*|"         # 用户管理
     r"mount\b|umount\b|swapon\b|"              # 存储操作
     r"nohup\b|screen\b|tmux\b\s+"              # 会话管理

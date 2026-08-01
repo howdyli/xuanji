@@ -10,6 +10,10 @@
 #   - agent-memory-system 后端 :8000（远程长期记忆）
 #   - AIO-Sandbox :8030（技能执行，见 sandbox-docker-compose.yaml）
 
+# 独立 project 名：避免与 sandbox-docker-compose.yaml 共用默认目录名，
+# 否则互相把对方容器当 orphan（up 时报 Found orphan containers 警告）
+name: xiaopaw-app
+
 services:
   xiaopaw:
     image: xiaopaw:latest
